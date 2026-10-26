@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/kubemq-io/kubemq-community/config"
+	"github.com/kubemq-io/kubemq-community/pkg/authentication"
 	"github.com/kubemq-io/kubemq-community/pkg/logging"
 	"github.com/kubemq-io/kubemq-community/pkg/monitor"
 	"github.com/labstack/echo/v4"
@@ -35,6 +36,8 @@ type Server struct {
 	broker          *broker.Service
 	metricsExporter *metrics.Exporter
 	apiService      *service
+	auth            *authentication.Authenticator
+	cookieName      string
 }
 
 var appConfig *config.Config
@@ -71,6 +74,12 @@ func CreateApiServer(ctx context.Context, broker *broker.Service, appConfigs ...
 		broker:          broker,
 		metricsExporter: metrics.GetExporter(),
 	}
+	auth, err := authentication.New(appConfig.Authentication)
+	if err != nil {
+		return nil, err
+	}
+	s.auth = auth
+	s.cookieName = sessionCookieName(appConfig.Api.Port)
 	s.apiService = newService(appConfig, broker, s.metricsExporter)
 	s.context, s.cancelFunc = context.WithCancel(ctx)
 	e := echo.New()
@@ -99,9 +108,9 @@ func CreateApiServer(ctx context.Context, broker *broker.Service, appConfigs ...
 	})
 	e.GET("/config", func(c echo.Context) error {
 		return c.JSONPretty(http.StatusOK, appConfig.Redacted(), "\t")
-	})
-	e.GET("/metrics", echo.WrapHandler(s.metricsExporter.PrometheusHandler()))
-	statsGroup := e.Group("/v1/stats")
+	}, s.requireSession)
+	e.GET("/metrics", echo.WrapHandler(s.metricsExporter.PrometheusHandler()), s.requireSession)
+	statsGroup := e.Group("/v1/stats", s.requireSession)
 	statsGroup.Use(middleware.GzipWithConfig(middleware.GzipConfig{
 		Level: 5,
 	}))
@@ -123,7 +132,10 @@ func CreateApiServer(ctx context.Context, broker *broker.Service, appConfigs ...
 		_ = monitor.MonitorHandlerFunc(s.context, c)
 		return nil
 	})
-	apiGroup := e.Group("/api", s.apiService.requireReady)
+	e.GET("/api/auth/session", s.handleSession)
+	e.POST("/api/auth/login", s.handleLogin)
+	e.POST("/api/auth/logout", s.handleLogout)
+	apiGroup := e.Group("/api", s.requireSession, s.apiService.requireReady)
 	apiGroup.GET("/snapshot", func(c echo.Context) error {
 		return s.apiService.getSnapshot(c)
 	})

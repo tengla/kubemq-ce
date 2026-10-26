@@ -10,8 +10,10 @@ defineProps({
   starting: { type: Boolean, default: false },
   dark: { type: Boolean, default: false },
   open: { type: Boolean, default: false },
+  // Who is signed in; empty when the broker has authentication off.
+  user: { type: String, default: '' },
 })
-defineEmits(['toggle-theme'])
+defineEmits(['toggle-theme', 'sign-out'])
 </script>
 
 <template>
@@ -38,12 +40,23 @@ defineEmits(['toggle-theme'])
       </RouterLink>
     </nav>
 
-    <footer class="foot">
-      <span class="muted small">{{ host?.version || '' }}</span>
-      <button type="button" class="icon-btn" :aria-label="dark ? 'Switch to light theme' : 'Switch to dark theme'" @click="$emit('toggle-theme')">
-        <Icon :name="dark ? 'sun' : 'moon'" />
-      </button>
-    </footer>
+    <div class="bottom">
+      <div v-if="user" class="user">
+        <div class="user-name">
+          <span class="muted small">Signed in as</span>
+          <span :title="user">{{ user }}</span>
+        </div>
+        <button type="button" class="icon-btn" aria-label="Sign out" title="Sign out" @click="$emit('sign-out')">
+          <Icon name="log-out" />
+        </button>
+      </div>
+      <footer class="foot">
+        <span class="muted small">{{ host?.version || '' }}</span>
+        <button type="button" class="icon-btn" :aria-label="dark ? 'Switch to light theme' : 'Switch to dark theme'" @click="$emit('toggle-theme')">
+          <Icon :name="dark ? 'sun' : 'moon'" />
+        </button>
+      </footer>
+    </div>
   </aside>
 </template>
 
@@ -126,8 +139,32 @@ nav {
 .count {
   font-size: 0.8rem;
 }
-.foot {
+.bottom {
   margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.user {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 8px 0;
+  border-top: 1px solid var(--border);
+}
+.user-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-weight: 500;
+}
+.user-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.foot {
   display: flex;
   align-items: center;
   justify-content: space-between;

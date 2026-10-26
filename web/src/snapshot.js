@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import { CHANNEL_TYPES, TYPES_BY_KEY } from './channelTypes'
+import { needsLogin, sessionExpired } from './session'
 
 // The server rebuilds its snapshot every 5s (services/api saveInterval) and
 // serves the cached copy, so polling faster only catches each one sooner.
@@ -112,10 +113,11 @@ function record(data) {
 }
 
 export async function pollSnapshot() {
-  if (inFlight) return
+  if (inFlight || needsLogin()) return
   inFlight = true
   try {
     const response = await fetch('/api/snapshot', { cache: 'no-store' })
+    if (response.status === 401) sessionExpired()
     snapshot.starting = response.status === 503
     const body = await response.json().catch(() => null)
     if (!response.ok || !body || body.error) throw new Error(body?.error_string || `HTTP ${response.status}`)

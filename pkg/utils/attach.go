@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/gorilla/websocket"
 	"github.com/kubemq-io/kubemq-community/config"
+	"net/http"
 	"regexp"
 	"strings"
 	"text/tabwriter"
@@ -16,10 +17,10 @@ import (
 
 var retries = 10
 
-func runWebsocketClientReaderWriter(ctx context.Context, uri string, chRead chan string, chWrite chan string, ready chan struct{}, errCh chan error) {
+func runWebsocketClientReaderWriter(ctx context.Context, uri string, header http.Header, chRead chan string, chWrite chan string, ready chan struct{}, errCh chan error) {
 	var c *websocket.Conn
 	for i := 0; i < retries; i++ {
-		conn, res, err := websocket.DefaultDialer.Dial(uri, nil)
+		conn, res, err := websocket.DefaultDialer.Dial(uri, header)
 		if err != nil {
 			buf := make([]byte, 1024)
 			if res != nil {
@@ -116,7 +117,7 @@ func runner(ctx context.Context, cfg *config.Config, resType, resChannel string,
 	txChan := make(chan string, 10)
 	ready := make(chan struct{})
 	errCh := make(chan error, 10)
-	go runWebsocketClientReaderWriter(ctx, uri, rxChan, txChan, ready, errCh)
+	go runWebsocketClientReaderWriter(ctx, uri, APIHeader(cfg), rxChan, txChan, ready, errCh)
 	<-ready
 	txChan <- "start"
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.TabIndent)

@@ -1,3 +1,5 @@
+import { sessionExpired } from './session'
+
 // Calls one of the dashboard actions handled by POST /api/request.
 export async function apiRequest(type, data) {
   const response = await fetch('/api/request', {
@@ -5,6 +7,7 @@ export async function apiRequest(type, data) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type, data }),
   })
+  if (response.status === 401) sessionExpired()
   const body = await response.json().catch(() => null)
   if (!response.ok || !body || body.error) throw new Error(body?.error_string || `HTTP ${response.status}`)
   return body.data

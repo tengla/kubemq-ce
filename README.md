@@ -14,7 +14,7 @@ kubemq-ce is a fork of [KubeMQ Community](https://github.com/kubemq-io/kubemq-co
 - **No usage reporting.** Upstream sends hostname, a host fingerprint, message counts and environment to `api.kubemq.io` at startup and every 5 minutes. That code is gone.
 - **Runs on Kubernetes.** Upstream refuses to start inside a Kubernetes pod. kubemq-ce starts there like it does anywhere else.
 - **A new dashboard, built from source.** Upstream ships its dashboard only as a compiled bundle. This one lives in [`web/`](web) (Vue 3 + Vite) and covers every channel type. See [Web dashboard](#web-dashboard).
-- **Client authentication.** Upstream's community edition has authentication settings but ignores them. Here, gRPC and REST clients can be required to send a JWT. See [Authentication](#authentication).
+- **Authentication.** Upstream's community edition has authentication settings but ignores them. Here, gRPC and REST clients can be required to send a JWT, and the dashboard asks for one at sign-in. See [Authentication](#authentication).
 - **Current dependencies.** Go 1.26 and up-to-date gRPC, Prometheus, echo and NATS libraries.
 - **Fixes.** The dashboard no longer shows another server's metrics when two run on the same host, and links to individual channels work on reload.
 
@@ -88,7 +88,9 @@ Without `--ttl` the token never expires. The server checks the signature, the al
 
 Clients send the token in the `authorization` gRPC metadata key or the `Authorization` HTTP header, with or without `Bearer `. The SDKs do this when given a token: `credentials` in kubemq-js, `WithAuthToken` in kubemq-go. The `kubemq` CLI uses `client.authToken` from `config.yaml`.
 
-With authentication on, gRPC (port 50000) and REST (port 9090) reject other requests with `Unauthenticated` or `401`. Only `Ping` and `GET /ping` are open, for health checks. Use TLS (the `security` section) so tokens aren't sent in clear text. The dashboard on port 8080 is not covered; see the warning below.
+With authentication on, gRPC (port 50000) and REST (port 9090) reject other requests with `Unauthenticated` or `401`. Only `Ping` and `GET /ping` are open, for health checks. Use TLS (the `security` section) so tokens aren't sent in clear text.
+
+The dashboard (port 8080) shows a sign-in page that asks for a token. The server keeps it in an HttpOnly cookie until the token expires or you sign out; tokens without `--ttl` last until the browser closes. Its API, `/metrics`, `/config` and `/v1/stats` also accept the token as an `Authorization: Bearer` header, so point Prometheus at `/metrics` with a bearer token. `/health` and `/ready` stay open for probes.
 
 ## Web dashboard
 
@@ -108,7 +110,7 @@ The dashboard runs on port 8080, next to the broker.
 </picture>
 
 > [!WARNING]
-> The dashboard has no authentication, even when [client authentication](#authentication) is on. Anyone who can reach port 8080 can read, send and delete messages. Don't expose it to untrusted networks: publish it only on localhost (`-p 127.0.0.1:8080:8080`) or put it behind a proxy that authenticates.
+> Unless [authentication](#authentication) is on, the dashboard has no sign-in: anyone who can reach port 8080 can read, send and delete messages. With it on, the dashboard is still plain HTTP, so the session cookie crosses the network unencrypted. Either way, don't expose port 8080 to untrusted networks directly: publish it only on localhost (`-p 127.0.0.1:8080:8080`) or put it behind a proxy that terminates TLS.
 
 ## Clients
 

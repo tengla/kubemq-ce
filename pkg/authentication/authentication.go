@@ -64,18 +64,22 @@ func newAuthenticator(cfg *config.JWTAuthenticationConfig) (*Authenticator, erro
 // Verify checks a token taken from a request. A "Bearer " prefix is optional,
 // because the Go SDK's REST transport adds one and the gRPC SDKs do not.
 func (a *Authenticator) Verify(token string) error {
-	token = strings.TrimSpace(token)
-	if len(token) > 7 && strings.EqualFold(token[:7], "bearer ") {
-		token = strings.TrimSpace(token[7:])
-	}
+	_, err := a.Claims(token)
+	return err
+}
+
+// Claims verifies a token like Verify and returns its registered claims.
+func (a *Authenticator) Claims(token string) (*jwt.RegisteredClaims, error) {
+	token = BareToken(token)
 	if token == "" {
-		return fmt.Errorf("%wno token provided", entities.ErrAuthInvalidAuthToken)
+		return nil, fmt.Errorf("%wno token provided", entities.ErrAuthInvalidAuthToken)
 	}
-	_, err := a.parser.Parse(token, func(*jwt.Token) (any, error) { return a.verifyKey, nil })
+	claims := &jwt.RegisteredClaims{}
+	_, err := a.parser.ParseWithClaims(token, claims, func(*jwt.Token) (any, error) { return a.verifyKey, nil })
 	if err != nil {
-		return fmt.Errorf("%w%s", entities.ErrAuthInvalidAuthToken, err)
+		return nil, fmt.Errorf("%w%s", entities.ErrAuthInvalidAuthToken, err)
 	}
-	return nil
+	return claims, nil
 }
 
 // Sign creates a token that the configured key verifies. HMAC tokens are
@@ -115,6 +119,15 @@ func Sign(cfg *config.JWTAuthenticationConfig, privateKey []byte, subject string
 		return "", fmt.Errorf("the private key does not match the configured key: %w", err)
 	}
 	return token, nil
+}
+
+// BareToken trims whitespace and an optional "Bearer " prefix.
+func BareToken(token string) string {
+	token = strings.TrimSpace(token)
+	if len(token) > 7 && strings.EqualFold(token[:7], "bearer ") {
+		token = strings.TrimSpace(token[7:])
+	}
+	return token
 }
 
 // UsesHMAC reports whether tokens are signed with the configured secret

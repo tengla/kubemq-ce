@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/go-resty/resty/v2"
 	"github.com/kubemq-io/kubemq-community/config"
 	"github.com/kubemq-io/kubemq-community/pkg/utils"
 
@@ -66,12 +65,12 @@ func (o *ListOptions) Run(ctx context.Context) error {
 	resp := &Response{}
 	q := &Queues{}
 
-	r, err := resty.New().R().SetResult(resp).SetError(resp).Get(fmt.Sprintf("%s/v1/stats/queues", o.cfg.Client.ApiAddress))
+	r, err := utils.APIRequest(o.cfg).SetResult(resp).SetError(resp).Get(fmt.Sprintf("%s/v1/stats/queues", o.cfg.Client.ApiAddress))
 	if err != nil {
 		return err
 	}
 	if !r.IsSuccess() {
-		return fmt.Errorf("not available in current Kubemq version, consider upgrade Kubemq version")
+		return utils.APIResponseError(r)
 	}
 	if resp.Error {
 		return fmt.Errorf("%s", resp.ErrorString)

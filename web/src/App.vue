@@ -3,8 +3,11 @@ import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import Sidebar from './components/Sidebar.vue'
 import Toasts from './components/Toasts.vue'
+import LoginPage from './pages/LoginPage.vue'
 import { BRAND } from './router'
+import { logout, needsLogin, session } from './session'
 import { snapshot } from './snapshot'
+import { notify } from './toast'
 
 const route = useRoute()
 const online = computed(() => !snapshot.error && snapshot.data != null)
@@ -46,10 +49,19 @@ onBeforeUnmount(() => systemDark.removeEventListener('change', onSystemChange))
 const menuOpen = ref(false)
 watch(() => route.fullPath, () => (menuOpen.value = false))
 provide('openMenu', () => (menuOpen.value = true))
+
+async function signOut() {
+  try {
+    await logout()
+  } catch (err) {
+    notify(`Sign-out failed: ${err.message}`, 'error')
+  }
+}
 </script>
 
 <template>
-  <div class="layout">
+  <LoginPage v-if="needsLogin()" />
+  <div v-else-if="session.checked" class="layout">
     <Sidebar
       :brand="BRAND"
       :host="snapshot.host"
@@ -58,7 +70,9 @@ provide('openMenu', () => (menuOpen.value = true))
       :starting="snapshot.starting"
       :dark="dark"
       :open="menuOpen"
+      :user="session.enabled ? session.subject || 'Signed in' : ''"
       @toggle-theme="toggleTheme"
+      @sign-out="signOut"
     />
     <div v-if="menuOpen" class="scrim" @click="menuOpen = false" />
     <main class="main">
