@@ -72,7 +72,7 @@ func (o *ListOptions) Run(ctx context.Context) error {
 		return fmt.Errorf("not available in current Kubemq version, consider upgrade Kubemq version")
 	}
 	if resp.Error {
-		return fmt.Errorf(resp.ErrorString)
+		return fmt.Errorf("%s", resp.ErrorString)
 	}
 	err = json.Unmarshal(resp.Data, q)
 	if err != nil {

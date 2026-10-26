@@ -178,7 +178,7 @@ func (s *Server) handlerSubscribeToEvents(c echo.Context, appConfig *config.Conf
 			}
 			errOnSend := conn.WriteMessage(1, data)
 			if err != nil {
-				s.logger.Debugw("error on writing to web socket", "error", errors.Wrapf(entities.ErrOnWriteToWebSocket, errOnSend.Error()))
+				s.logger.Debugw("error on writing to web socket", "error", errors.Wrap(entities.ErrOnWriteToWebSocket, errOnSend.Error()))
 				goto drain
 			}
 			metrics.ReportEventReceive(eventReceive, subRequest)
@@ -193,7 +193,7 @@ func (s *Server) handlerSubscribeToEvents(c echo.Context, appConfig *config.Conf
 			resErr := &Response{}
 			errOnSend := conn.WriteMessage(1, resErr.SetError(closeErr).Marshal())
 			if errOnSend != nil {
-				s.logger.Debugw("error on writing to web socket", "error", errors.Wrapf(entities.ErrOnWriteToWebSocket, errOnSend.Error()))
+				s.logger.Debugw("error on writing to web socket", "error", errors.Wrap(entities.ErrOnWriteToWebSocket, errOnSend.Error()))
 			}
 			goto drain
 
@@ -274,7 +274,7 @@ func (s *Server) handlerSubscribeToRequests(c echo.Context, appConfig *config.Co
 			}
 			errOnSend := conn.WriteMessage(1, reqData)
 			if err != nil {
-				s.logger.Debugw("error on writing to web socket", "error", errors.Wrapf(entities.ErrOnWriteToWebSocket, errOnSend.Error()))
+				s.logger.Debugw("error on writing to web socket", "error", errors.Wrap(entities.ErrOnWriteToWebSocket, errOnSend.Error()))
 				goto drain
 			}
 			metrics.ReportRequest(request, nil, nil)
@@ -289,7 +289,7 @@ func (s *Server) handlerSubscribeToRequests(c echo.Context, appConfig *config.Co
 			resErr := &Response{}
 			errOnSend := conn.WriteMessage(1, resErr.SetError(closeErr).Marshal())
 			if errOnSend != nil {
-				s.logger.Debugw("error on writing to web socket", "error", errors.Wrapf(entities.ErrOnWriteToWebSocket, errOnSend.Error()))
+				s.logger.Debugw("error on writing to web socket", "error", errors.Wrap(entities.ErrOnWriteToWebSocket, errOnSend.Error()))
 			}
 			goto drain
 		}
@@ -352,7 +352,7 @@ func (s *Server) handlerSendMessageStream(c echo.Context) error {
 
 			errOnSend := conn.WriteMessage(1, data)
 			if err != nil {
-				s.logger.Debugw("error on writing to web socket", "error", errors.Wrapf(entities.ErrOnWriteToWebSocket, errOnSend.Error()))
+				s.logger.Debugw("error on writing to web socket", "error", errors.Wrap(entities.ErrOnWriteToWebSocket, errOnSend.Error()))
 				return nil
 			}
 		} else {

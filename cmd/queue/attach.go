@@ -78,7 +78,7 @@ func (o *AttachOptions) Complete(args []string) error {
 			return fmt.Errorf("not available in current Kubemq version, consider upgrade Kubemq version")
 		}
 		if resp.Error {
-			return fmt.Errorf(resp.ErrorString)
+			return fmt.Errorf("%s", resp.ErrorString)
 		}
 		err = json.Unmarshal(resp.Data, queues)
 		if err != nil {

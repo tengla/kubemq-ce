@@ -34,7 +34,7 @@ Ports: `8080` web interface and API, `50000` gRPC, `9090` REST.
 
 ## From source
 
-Requires Go 1.19 or later.
+Requires Go 1.26 or later.
 
 ```bash
 go build -o kubemq -ldflags "-X 'main.version=v2.4.0'" .

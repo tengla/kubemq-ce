@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 
 	dto "github.com/prometheus/client_model/go"
 )
@@ -133,7 +134,7 @@ func parseReader(in io.Reader, ch chan<- *dto.MetricFamily) error {
 	// We could do further content-type checks here, but the
 	// fallback for now will anyway be the text format
 	// version 0.0.4, so just go for it and see if it works.
-	var parser expfmt.TextParser
+	parser := expfmt.NewTextParser(model.LegacyValidation)
 	metricFamilies, err := parser.TextToMetricFamilies(in)
 	if err != nil {
 		return fmt.Errorf("reading text format failed: %v", err)

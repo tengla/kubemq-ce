@@ -21,7 +21,7 @@ func (r *SendCQRSMessageResponse) TagsKeyValue() map[string]string {
 }
 func (r *SendCQRSMessageResponse) GetError() error {
 	if r.Error != "" {
-		return fmt.Errorf(r.Error)
+		return fmt.Errorf("%s", r.Error)
 	}
 	return nil
 }

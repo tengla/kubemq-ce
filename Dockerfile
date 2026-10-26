@@ -1,4 +1,4 @@
-FROM kubemq/gobuilder as builder
+FROM golang:1.26 AS builder
 ARG VERSION
 ARG GIT_COMMIT
 ARG BUILD_TIME

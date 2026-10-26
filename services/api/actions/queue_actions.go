@@ -177,7 +177,7 @@ func streamQueueMessagesWithInternalClient(ctx context.Context, streamClient *In
 					if response.IsError {
 						responses <- actions.NewStreamQueueMessageResponse().
 							SetRequestType(request.RequestType).
-							SetError(fmt.Errorf(response.Error))
+							SetError(fmt.Errorf("%s", response.Error))
 						continue
 					} else {
 						if len(response.Messages) == 0 {
@@ -234,7 +234,7 @@ func streamQueueMessagesWithInternalClient(ctx context.Context, streamClient *In
 						if response.IsError {
 							responses <- actions.NewStreamQueueMessageResponse().
 								SetRequestType(request.RequestType).
-								SetError(fmt.Errorf(response.Error))
+								SetError(fmt.Errorf("%s", response.Error))
 							continue
 						} else {
 							responses <- actions.NewStreamQueueMessageResponse().

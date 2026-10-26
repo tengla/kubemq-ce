@@ -169,7 +169,7 @@ func waitForResponseValue(value int, responseCh chan *pb.QueuesDownstreamRespons
 			return "", fmt.Errorf("value %d is not equal to num of messages %d", value, len(resp.Messages))
 		}
 		if resp.IsError {
-			return "", fmt.Errorf(resp.Error)
+			return "", fmt.Errorf("%s", resp.Error)
 		}
 		return resp.TransactionId, nil
 	case <-time.After(5 * time.Second):
