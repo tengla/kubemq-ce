@@ -234,9 +234,14 @@ const topChannels = computed(() =>
   border-radius: 3px;
   flex: none;
 }
-@media (max-width: 1200px) {
-  .row,
+/* The two tables need about 620px each, so they sit side by side only on wide screens. */
+@media (max-width: 1600px) {
   .row.two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 1200px) {
+  .row {
     grid-template-columns: minmax(0, 1fr);
   }
 }
