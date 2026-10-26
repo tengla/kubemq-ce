@@ -271,3 +271,6 @@ test_rest*/
 test_single_*/
 /config/config.yaml
 /config.yaml
+
+# Binary built by `task build`
+/kubemq
