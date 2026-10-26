@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"github.com/kubemq-io/kubemq-community/services/array"
 	"github.com/kubemq-io/kubemq-community/services/broker"
+	"io/fs"
+	"path"
 	"strings"
 
 	"github.com/kubemq-io/kubemq-community/services/metrics"
@@ -37,26 +39,26 @@ type Server struct {
 
 var appConfig *config.Config
 
-func customHTTPErrorHandler(err error, c echo.Context) {
-	uri := c.Request().RequestURI
-	if strings.HasPrefix(uri, "/dash") {
-		c.Redirect(301, "/dashboard")
-		return
+// spaHandler serves the dashboard's static files. Any other path is a
+// client-side route (such as /queues/<channel>, whose channel name may
+// contain dots) and gets index.html, except under app/, where a missing file
+// is a stale build asset and should 404.
+func spaHandler(assets fs.FS) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		name := strings.TrimPrefix(path.Clean(c.Request().URL.Path), "/")
+		if name == "" {
+			name = "."
+		}
+		info, err := fs.Stat(assets, name)
+		switch {
+		case err == nil && !info.IsDir():
+			return echo.StaticFileHandler(name, assets)(c)
+		case err != nil && strings.HasPrefix(name, "app/"):
+			return echo.ErrNotFound
+		default:
+			return echo.StaticFileHandler("index.html", assets)(c)
+		}
 	}
-	if strings.HasPrefix(uri, "/que") {
-		c.Redirect(301, "/queues")
-		return
-	}
-	if strings.HasPrefix(uri, "/pub") {
-		c.Redirect(301, "/pubsub")
-		return
-	}
-	if strings.HasPrefix(uri, "/cq") {
-		c.Redirect(301, "/cqrs")
-		return
-	}
-
-	c.String(404, err.Error())
 }
 func CreateApiServer(ctx context.Context, broker *broker.Service, appConfigs ...*config.Config) (*Server, error) {
 	if len(appConfigs) == 0 {
@@ -77,9 +79,7 @@ func CreateApiServer(ctx context.Context, broker *broker.Service, appConfigs ...
 	e.Use(middleware.Recover())
 	e.Use(loggingMiddleware(s.logger))
 	e.Use(middleware.CORS())
-	e.HTTPErrorHandler = customHTTPErrorHandler
-	fs := echo.MustSubFS(StaticAssets, "assets")
-	e.StaticFS("/", fs)
+	e.GET("/*", spaHandler(echo.MustSubFS(StaticAssets, "assets")))
 	e.GET("/health", func(c echo.Context) error {
 
 		if s.broker.IsHealthy() {

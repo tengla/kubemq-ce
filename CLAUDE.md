@@ -14,7 +14,7 @@ go test ./interfaces/grpc -run TestName -v                # single test
 task lint                                                 # golangci-lint run --disable gocritic --enable misspell --disable gosec
 task docker                                               # build image kubemq/kubemq-community:<VERSION>
 task web                                                  # build the dashboard (web/) into assets/
-npm --prefix web run dev                                  # dashboard dev server; proxies /api to a broker on :8080
+npm --prefix web run dev                                  # dashboard dev server; proxies /api (incl. websockets) to BROKER_URL, default http://localhost:8080
 ```
 
 `Taskfile.yml` (go-task) holds the release flow (`task release` = git tag + multi-arch buildx push + goreleaser). `VERSION` there is the release version; bump it for releases. The default `task` target builds `kubemq.exe` (Windows-oriented).
@@ -30,7 +30,7 @@ Layers, bottom to top:
 - **`services/array`**: the façade every transport calls (`SendEvents`, `SubscribeToCommands`, queue upstream/downstream, ...). It owns shared clients and client pools, tracks per-subscription clients, and wraps calls with `pkg/monitor` middleware for metrics.
 - **`interfaces/grpc`** and **`interfaces/rest`**: public transports. gRPC implements the `kubemq-io/protobuf` service. REST uses echo plus websockets for subscriptions. Both delegate straight to `services.Array`.
 - **`services/api`** + **`pkg/api`**: the web dashboard backend (echo, port `Api.Port`). It serves `assets/` as static files (embedded via `//go:embed` in `main.go`) and exposes `/api/snapshot` plus actions (send/receive/purge) that go through an internal client. The snapshot is rebuilt every 5 s (`saveInterval`) from `services/metrics`, which gathers the process's Prometheus registry in-process, merged with entity history saved in a local bolt DB under the store path.
-- **Dashboard UI**: `web/` (Vue 3 + Vite) builds into `assets/`, owning `/` and `/dashboard` (`assets/index.html`, `assets/dashboard/index.html`, `assets/app/`). The channel pages (`/queues`, `/pubsub`, `/cqrs`) are still the old prebuilt Nuxt bundle (`assets/_nuxt`), which has no source. Commit the build output: `go build` embeds whatever is in `assets/`.
+- **Dashboard UI**: `web/` (Vue 3 + Vite + vue-router) builds into `assets/` (`index.html` plus hashed files in `assets/app/`); the build empties `assets/` first. Commit the build output: `go build` embeds whatever is in `assets/`. `spaHandler` in `services/api/server.go` serves those files and returns `index.html` for every other path, so routes like `/queues/<channel>` work on reload; channel names often contain dots, so don't key the fallback on file extensions. Pages: Home (`/dashboard`), a list page per channel type (`/queues`, `/events`, `/events-store`, `/commands`, `/queries`) and a channel page (`/<type>/<channel>`) whose tabs use `POST /api/request` and the websocket endpoints (`/api/subscribe/pubsub`, `/api/subscribe/cqrs`, `/api/stream_queue_messages`, and `/api/monitor`, which only forwards traffic after the client sends `start`). All pages share one snapshot poller (`web/src/snapshot.js`).
 
 The `cmd/<pattern>` packages are CLI clients that connect to a running server using the `client` config section (gRPC host/port, API address).
 

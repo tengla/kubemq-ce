@@ -1,6 +1,6 @@
 <script setup>
 import Icon from './Icon.vue'
-import { CHANNEL_TYPES } from '../snapshot'
+import { CHANNEL_TYPES } from '../channelTypes'
 
 defineProps({
   brand: { type: String, required: true },
@@ -28,13 +28,13 @@ defineEmits(['toggle-theme'])
     </div>
 
     <nav aria-label="Main">
-      <a href="/dashboard" class="item active" aria-current="page"><Icon name="home" />Home</a>
+      <RouterLink to="/dashboard" class="item"><Icon name="home" />Home</RouterLink>
       <p class="section muted">Channels</p>
-      <a v-for="t in CHANNEL_TYPES" :key="t.key" :href="t.href" class="item">
+      <RouterLink v-for="t in CHANNEL_TYPES" :key="t.key" :to="t.path" class="item">
         <Icon :name="t.icon" />
         <span class="grow">{{ t.label }}</span>
-        <span v-if="byType" class="count muted num">{{ byType[t.key].active }}/{{ byType[t.key].channels }}</span>
-      </a>
+        <span v-if="byType" class="count muted num" :title="`${byType[t.key].active} active of ${byType[t.key].channels}`">{{ byType[t.key].active }}/{{ byType[t.key].channels }}</span>
+      </RouterLink>
     </nav>
 
     <footer class="foot">
@@ -114,7 +114,7 @@ nav {
   background: var(--surface-2);
   color: var(--text-primary);
 }
-.item.active {
+.item.router-link-active {
   background: var(--accent-wash);
   color: var(--text-primary);
   font-weight: 500;

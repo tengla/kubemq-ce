@@ -1,42 +1,25 @@
-import { copyFileSync, mkdirSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-// The Go server embeds ../assets and serves it as static files. The new UI
-// owns / and /dashboard; the legacy Nuxt pages (/queues, /pubsub, /cqrs) keep
-// living next to it in assets/ until they are rebuilt here.
+// The Go server embeds ../assets and serves it, falling back to index.html
+// for client-side routes (services/api spaHandler). The build owns the whole
+// directory, so it is emptied on every build.
 const assetsDir = resolve(import.meta.dirname, '../assets')
-const legacyServer = 'http://localhost:8080'
-
-function legacyLayout() {
-  return {
-    name: 'legacy-layout',
-    apply: 'build',
-    buildStart() {
-      rmSync(resolve(assetsDir, 'app'), { recursive: true, force: true })
-    },
-    closeBundle() {
-      mkdirSync(resolve(assetsDir, 'dashboard'), { recursive: true })
-      copyFileSync(resolve(assetsDir, 'index.html'), resolve(assetsDir, 'dashboard/index.html'))
-    },
-  }
-}
+// `npm run dev` proxies API calls to a running broker; BROKER_URL overrides it.
+const broker = process.env.BROKER_URL ?? 'http://localhost:8080'
 
 export default defineConfig({
-  plugins: [vue(), legacyLayout()],
+  plugins: [vue()],
   build: {
     outDir: assetsDir,
-    emptyOutDir: false,
+    emptyOutDir: true,
     assetsDir: 'app',
   },
   server: {
     proxy: {
-      '/api': legacyServer,
-      '/queues': legacyServer,
-      '/pubsub': legacyServer,
-      '/cqrs': legacyServer,
-      '/_nuxt': legacyServer,
+      '/api': { target: broker, ws: true },
+      '/metrics': broker,
     },
   },
 })
