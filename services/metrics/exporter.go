@@ -2,15 +2,15 @@ package metrics
 
 import (
 	"context"
-	"fmt"
 	"github.com/kubemq-io/kubemq-community/config"
 	"github.com/kubemq-io/kubemq-community/pkg/api"
-	ws "github.com/kubemq-io/kubemq-community/pkg/http"
 	pb "github.com/kubemq-io/protobuf/go"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/common/expfmt"
 	"go.uber.org/atomic"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,7 +18,6 @@ import (
 var reportMetricSize = 1000
 var reportMetricWorkers = 5
 var reportMetricDropAfter = 100 * time.Millisecond
-var promPort = 36742
 
 var node = config.Host()
 var labels = []string{"node", "client_id", "type", "side", "channel"}
@@ -66,12 +65,20 @@ func (e *Exporter) MetricsDropped() uint64 {
 	return e.metricsDropped.Load()
 }
 
+// PrometheusString renders this process's registered metrics in the text
+// exposition format.
 func (e *Exporter) PrometheusString() (string, error) {
-	str, err := ws.GetString(context.Background(), fmt.Sprintf("http://localhost:%d/metrics", promPort))
+	families, err := prometheus.DefaultGatherer.Gather()
 	if err != nil {
 		return "", err
 	}
-	return str, nil
+	var buf strings.Builder
+	for _, family := range families {
+		if _, err := expfmt.MetricFamilyToText(&buf, family); err != nil {
+			return "", err
+		}
+	}
+	return buf.String(), nil
 }
 func (e *Exporter) PrometheusHandler() http.Handler {
 	return promhttp.Handler()
@@ -152,7 +159,6 @@ func initExporter(ctx context.Context) *Exporter {
 	if !e.initPromMetrics() {
 		return nil
 	}
-	e.initPromServer()
 	for i := 0; i < reportMetricWorkers; i++ {
 		go e.runWorker(ctx)
 	}
@@ -240,14 +246,6 @@ func (e *Exporter) initPromMetrics() bool {
 	err = prometheus.Register(e.pendingCollector.metric)
 
 	return err == nil
-}
-func (e *Exporter) initPromServer() {
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.Handler())
-	go func() {
-		_ = http.ListenAndServe(fmt.Sprintf(":%d", promPort), mux)
-	}()
-
 }
 
 func getLabels(ty, cl, sd, ch string) prometheus.Labels {
