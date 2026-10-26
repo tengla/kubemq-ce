@@ -19,6 +19,11 @@ tasks:
     cmds:
       - go build -o "{{.BINARY_NAME}}.exe" -ldflags "-X 'main.version={{.VERSION}}'"
       - kubemq.exe server
+  web:
+    dir: web
+    cmds:
+      - npm ci
+      - npm run build
   goreleaser:
     env:
       TAG: v2.3.7

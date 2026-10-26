@@ -13,6 +13,8 @@ go test ./...                                             # all tests
 go test ./interfaces/grpc -run TestName -v                # single test
 task lint                                                 # golangci-lint run --disable gocritic --enable misspell --disable gosec
 task docker                                               # build image kubemq/kubemq-community:<VERSION>
+task web                                                  # build the dashboard (web/) into assets/
+npm --prefix web run dev                                  # dashboard dev server; proxies /api to a broker on :8080
 ```
 
 `Taskfile.yml` (go-task) holds the release flow (`task release` = git tag + multi-arch buildx push + goreleaser). `VERSION` there is the release version; bump it for releases. The default `task` target builds `kubemq.exe` (Windows-oriented).
@@ -27,8 +29,8 @@ Layers, bottom to top:
 - **`pkg/client`**: internal NATS/stan clients that map KubeMQ patterns onto NATS subjects with prefixes (`_EVENTS_.`, `_EVENTS_STORE_.`, `_COMMANDS_.`, `_QUERIES_.`, `_QUEUES_.`). Queue semantics (visibility, ack, peek, streaming downstream/upstream) are implemented here on top of stan. Includes `QueuePool` for pooled queue clients.
 - **`services/array`**: the façade every transport calls (`SendEvents`, `SubscribeToCommands`, queue upstream/downstream, ...). It owns shared clients and client pools, tracks per-subscription clients, and wraps calls with `pkg/monitor` middleware for metrics.
 - **`interfaces/grpc`** and **`interfaces/rest`**: public transports. gRPC implements the `kubemq-io/protobuf` service. REST uses echo plus websockets for subscriptions. Both delegate straight to `services.Array`.
-- **`services/api`** + **`pkg/api`**: the web dashboard backend (echo, port `Api.Port`). It serves the prebuilt Nuxt UI in `assets/` (embedded via `//go:embed` in `main.go` and treated as a build artifact, not source) and exposes stats/snapshots plus actions (send/receive/purge) that go through an internal client. `services/metrics` collects Prometheus counters for it.
-- **`services/report`**: periodic usage reporting.
+- **`services/api`** + **`pkg/api`**: the web dashboard backend (echo, port `Api.Port`). It serves `assets/` as static files (embedded via `//go:embed` in `main.go`) and exposes `/api/snapshot` plus actions (send/receive/purge) that go through an internal client. The snapshot is rebuilt every 5 s (`saveInterval`) from `services/metrics`, which gathers the process's Prometheus registry in-process, merged with entity history saved in a local bolt DB under the store path.
+- **Dashboard UI**: `web/` (Vue 3 + Vite) builds into `assets/`, owning `/` and `/dashboard` (`assets/index.html`, `assets/dashboard/index.html`, `assets/app/`). The channel pages (`/queues`, `/pubsub`, `/cqrs`) are still the old prebuilt Nuxt bundle (`assets/_nuxt`), which has no source. Commit the build output: `go build` embeds whatever is in `assets/`.
 
 The `cmd/<pattern>` packages are CLI clients that connect to a running server using the `client` config section (gRPC host/port, API address).
 
@@ -38,7 +40,7 @@ The `cmd/<pattern>` packages are CLI clients that connect to a running server us
 
 - Sources, in order: the `CONFIG` env var (base64-encoded YAML/TOML, or a file path), then `./config.yaml` (looked up next to the executable first, then in CWD), then defaults. Viper unmarshals into the struct.
 - Env overrides are registered per field with `bindViperEnv("Section.Field")`, which maps to `SECTION_FIELD` in upper snake case (e.g. `Broker.MaxPayload` → `BROKER_MAX_PAYLOAD`). When you add a config field, add it to that section's `bindViperEnv` list and its defaults.
-- **Side effect:** each config load writes the merged config back to the loaded file, or to `./config.yaml` in CWD if none was loaded. This is why `config.yaml` files appear in package directories after tests run.
+- **Side effect:** each config load writes the merged config back to the loaded file, or to `./config.yaml` in CWD if none was loaded. This is why `config.yaml` files appear in package directories after tests run. CLI subcommands do this too, and the write isn't atomic: several `kubemq` CLI processes started at once in the same directory can read a truncated file and reset it to defaults (pointing at `localhost:50000`). Scripts that generate traffic should use the REST API or start CLI clients one at a time.
 - `config.GetAppConfig` is a process-wide singleton (`sync.Once`), and some code (e.g. `pkg/monitor`) reads it globally. Tests use `config.GetCopyAppConfig` for isolated copies.
 - Authentication, authorization (casbin) and routing exist as config sections, but in this edition they are only referenced from `config/`.
 
