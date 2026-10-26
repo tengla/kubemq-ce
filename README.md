@@ -132,9 +132,12 @@ kubemq-ce keeps upstream's gRPC and REST API, so the upstream KubeMQ SDKs connec
 task build_all                                       # rebuild the dashboard, then the binary
 npm --prefix web ci && npm --prefix web run dev      # dashboard dev server with hot reload
 go test ./...                                        # tests (the integration tests take several minutes)
+task smoke -- localhost:50000                        # kubemq-js SDK smoke test against a running server
 ```
 
 The dashboard dev server proxies API calls to a broker on `http://localhost:8080`. Set `BROKER_URL` to use another one. Run `task web` and commit `assets/` after changing the dashboard, since `go build` embeds whatever is there.
+
+`task smoke` runs [`test/smoke-js`](test/smoke-js/smoke.mjs), which exercises every messaging pattern through the official Node SDK (kubemq-js, pinned in its `package.json`). Set `KUBEMQ_TOKEN` when authentication is on. It writes to fresh `smoke.<id>.*` channels on the target server. The SDK's channel-management calls rely on an internal channel only the commercial server answers, so they're reported as expected failures (`XFAIL`).
 
 Report bugs in this repository's [issues](https://github.com/tengla/kubemq-ce/issues).
 

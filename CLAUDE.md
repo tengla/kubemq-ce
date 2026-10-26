@@ -15,6 +15,7 @@ task lint                                                 # golangci-lint run --
 task docker                                               # build image kubemq/kubemq-community:<VERSION>
 task web                                                  # build the dashboard (web/) into assets/
 npm --prefix web run dev                                  # dashboard dev server; proxies /api (incl. websockets) to BROKER_URL, default http://localhost:8080
+task smoke -- localhost:50000                             # kubemq-js SDK smoke test (test/smoke-js) against a running server; KUBEMQ_TOKEN if auth is on
 ```
 
 `Taskfile.yml` (go-task) holds the release flow (`task release` = git tag + multi-arch buildx push + goreleaser). `VERSION` there is the release version; bump it for releases. The default `task` target builds `kubemq.exe` (Windows-oriented).

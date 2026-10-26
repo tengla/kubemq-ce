@@ -31,6 +31,13 @@ tasks:
     cmds:
       - task: web
       - task: build
+  # Runs test/smoke-js against a running server: task smoke -- [host:port]
+  # (default localhost:50000). Set KUBEMQ_TOKEN when authentication is on.
+  smoke:
+    dir: test/smoke-js
+    cmds:
+      - npm ci
+      - node smoke.mjs {{.CLI_ARGS}}
   goreleaser:
     env:
       TAG: v2.3.7

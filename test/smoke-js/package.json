@@ -1,0 +1,15 @@
+{
+  "name": "kubemq-ce-smoke-js",
+  "private": true,
+  "description": "Smoke test: the kubemq-js SDK against a running kubemq-ce server",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "smoke": "node smoke.mjs"
+  },
+  "dependencies": {
+    "kubemq-js": "3.0.1"
+  }
+}
