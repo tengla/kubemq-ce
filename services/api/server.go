@@ -98,7 +98,7 @@ func CreateApiServer(ctx context.Context, broker *broker.Service, appConfigs ...
 		}
 	})
 	e.GET("/config", func(c echo.Context) error {
-		return c.JSONPretty(http.StatusOK, appConfig, "\t")
+		return c.JSONPretty(http.StatusOK, appConfig.Redacted(), "\t")
 	})
 	e.GET("/metrics", echo.WrapHandler(s.metricsExporter.PrometheusHandler()))
 	statsGroup := e.Group("/v1/stats")
@@ -131,7 +131,7 @@ func CreateApiServer(ctx context.Context, broker *broker.Service, appConfigs ...
 		return s.apiService.handleRequests(c)
 	})
 	apiGroup.GET("/config", func(c echo.Context) error {
-		return c.JSONPretty(http.StatusOK, appConfig, "\t")
+		return c.JSONPretty(http.StatusOK, appConfig.Redacted(), "\t")
 	})
 	apiGroup.GET("/monitor", func(c echo.Context) error {
 		c.Set("appconf", appConfig)

@@ -8,6 +8,7 @@ import (
 	"github.com/kubemq-io/kubemq-community/cmd/queries"
 	"github.com/kubemq-io/kubemq-community/cmd/queue"
 	"github.com/kubemq-io/kubemq-community/cmd/server"
+	"github.com/kubemq-io/kubemq-community/cmd/token"
 	"github.com/kubemq-io/kubemq-community/config"
 	"github.com/kubemq-io/kubemq-community/pkg/logging"
 	"github.com/kubemq-io/kubemq-community/pkg/utils"
@@ -38,6 +39,7 @@ func Execute(version string, args []string) error {
 	rootCmd.AddCommand(events.NewCmdEvents(ctx, cfg))
 	rootCmd.AddCommand(events_store.NewCmdEventsStore(ctx, cfg))
 	rootCmd.AddCommand(queue.NewCmdQueue(ctx, cfg))
+	rootCmd.AddCommand(token.NewCmdToken(ctx, cfg))
 	//_ = doc.GenMarkdownTree(rootCmd, "./docs")
 	utils.CheckErr(rootCmd.Execute())
 	return nil

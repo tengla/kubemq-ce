@@ -106,6 +106,18 @@ func TestAuthenticationConfig_Validate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "unsupported_sig",
+			cfg: &AuthenticationConfig{
+				Enable: true,
+				JwtConfig: &JWTAuthenticationConfig{
+					Key:           "some-key",
+					FilePath:      "",
+					SignatureType: "none",
+				},
+			},
+			wantErr: true,
+		},
+		{
 			name: "no_jwt_conf",
 			cfg: &AuthenticationConfig{
 				Enable: true,

@@ -14,6 +14,7 @@ kubemq-ce is a fork of [KubeMQ Community](https://github.com/kubemq-io/kubemq-co
 - **No usage reporting.** Upstream sends hostname, a host fingerprint, message counts and environment to `api.kubemq.io` at startup and every 5 minutes. That code is gone.
 - **Runs on Kubernetes.** Upstream refuses to start inside a Kubernetes pod. kubemq-ce starts there like it does anywhere else.
 - **A new dashboard, built from source.** Upstream ships its dashboard only as a compiled bundle. This one lives in [`web/`](web) (Vue 3 + Vite) and covers every channel type. See [Web dashboard](#web-dashboard).
+- **Client authentication.** Upstream's community edition has authentication settings but ignores them. Here, gRPC and REST clients can be required to send a JWT. See [Authentication](#authentication).
 - **Current dependencies.** Go 1.26 and up-to-date gRPC, Prometheus, echo and NATS libraries.
 - **Fixes.** The dashboard no longer shows another server's metrics when two run on the same host, and links to individual channels work on reload.
 
@@ -61,6 +62,34 @@ The server reads `config.yaml` from the directory of the binary, or from the wor
 
 Any setting can be overridden with an environment variable named after its path: `Section.Field` becomes `SECTION_FIELD`, for example `API_PORT`, `QUEUE_MAX_RECEIVE_COUNT` or `STORE_STORE_PATH`.
 
+### Authentication
+
+Clients can be required to send a JWT. It is off by default. To turn it on:
+
+```yaml
+authentication:
+  enable: true
+  jwtConfig:
+    signatureType: HS256        # HS256/384/512, RS/PS/ES 256/384/512 or EdDSA
+    key: "a long random secret" # the HMAC secret, or a PEM public key for the other types
+    # filePath: /run/secrets/kubemq-jwt-key   # instead of key
+```
+
+or `AUTHENTICATION_ENABLE=true`, `AUTHENTICATION_JWT_CONFIG_SIGNATURE_TYPE=HS256` and `AUTHENTICATION_JWT_CONFIG_KEY=...`. The server writes its effective configuration back to `config.yaml`, so a key given in an environment variable ends up in that file too. Use `filePath` to keep the key out of it.
+
+Create tokens with the binary, using the same configuration:
+
+```bash
+./kubemq token --subject orders-service --ttl 720h          # HMAC: signed with the configured secret
+./kubemq token --subject orders-service --signing-key key.pem  # other types: the matching private key
+```
+
+Without `--ttl` the token never expires. The server checks the signature, the algorithm and, if present, the expiry. It doesn't check the subject.
+
+Clients send the token in the `authorization` gRPC metadata key or the `Authorization` HTTP header, with or without `Bearer `. The SDKs do this when given a token: `credentials` in kubemq-js, `WithAuthToken` in kubemq-go. The `kubemq` CLI uses `client.authToken` from `config.yaml`.
+
+With authentication on, gRPC (port 50000) and REST (port 9090) reject other requests with `Unauthenticated` or `401`. Only `Ping` and `GET /ping` are open, for health checks. Use TLS (the `security` section) so tokens aren't sent in clear text. The dashboard on port 8080 is not covered; see the warning below.
+
 ## Web dashboard
 
 The dashboard runs on port 8080, next to the broker.
@@ -79,7 +108,7 @@ The dashboard runs on port 8080, next to the broker.
 </picture>
 
 > [!WARNING]
-> The dashboard has no authentication. Anyone who can reach port 8080 can read, send and delete messages. Don't expose it to untrusted networks.
+> The dashboard has no authentication, even when [client authentication](#authentication) is on. Anyone who can reach port 8080 can read, send and delete messages. Don't expose it to untrusted networks: publish it only on localhost (`-p 127.0.0.1:8080:8080`) or put it behind a proxy that authenticates.
 
 ## Clients
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kubemq-io/kubemq-community/config"
+	"github.com/kubemq-io/kubemq-community/pkg/authentication"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
@@ -64,6 +65,10 @@ func NewServer(svc *services.SystemServices, appConfigs ...*config.Config) (*Ser
 		acceptTraffic: atomic.NewBool(false),
 	}
 	kubeversion = fmt.Sprintf("KubeMQ %s", appConfig.GetVersion())
+	auth, err := authentication.New(appConfig.Authentication)
+	if err != nil {
+		return nil, err
+	}
 
 	e := echo.New()
 	s.echoWebServer = e
@@ -74,6 +79,9 @@ func NewServer(svc *services.SystemServices, appConfigs ...*config.Config) (*Ser
 	e.HTTPErrorHandler = s.customHTTPErrorHandler
 	e.Use(middleware.CORSWithConfig(getCORSConfig(appConfig)))
 	e.Use(Logging(s.logger))
+	if auth != nil {
+		e.Use(Authentication(auth))
+	}
 
 	if svc.Broker != nil {
 		s.acceptTraffic.Store(svc.Broker.IsReady())
@@ -152,7 +160,7 @@ func NewServer(svc *services.SystemServices, appConfigs ...*config.Config) (*Ser
 
 	e.Server.ReadTimeout = time.Duration(appConfig.Rest.ReadTimeout) * time.Second
 	e.Server.WriteTimeout = time.Duration(appConfig.Rest.WriteTimeout) * time.Second
-	err := s.Run()
+	err = s.Run()
 	if err != nil {
 		return nil, err
 	}

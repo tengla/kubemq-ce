@@ -9,6 +9,7 @@ require (
 	github.com/fortytw2/leaktest v1.3.0
 	github.com/ghodss/yaml v1.0.0
 	github.com/go-resty/resty/v2 v2.17.2
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/json-iterator/go v1.1.12
 	github.com/kubemq-io/broker v1.8.0

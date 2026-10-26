@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -76,6 +77,36 @@ func (c *Config) SetVersion(value string) *Config {
 
 func (c *Config) GetVersion() string {
 	return c.version
+}
+
+const redactedValue = "REDACTED"
+
+// Redacted returns a copy of the config that is safe to show over HTTP: the
+// JWT key, the client token and the TLS private key are masked.
+func (c *Config) Redacted() *Config {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return &Config{}
+	}
+	out := &Config{}
+	if err := json.Unmarshal(data, out); err != nil {
+		return &Config{}
+	}
+	mask := func(s *string) {
+		if *s != "" {
+			*s = redactedValue
+		}
+	}
+	if out.Authentication != nil && out.Authentication.JwtConfig != nil {
+		mask(&out.Authentication.JwtConfig.Key)
+	}
+	if out.Client != nil {
+		mask(&out.Client.AuthToken)
+	}
+	if out.Security != nil && out.Security.Key != nil {
+		mask(&out.Security.Key.Data)
+	}
+	return out
 }
 
 func GetHostname() string {

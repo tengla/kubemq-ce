@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/kubemq-io/kubemq-community/config"
+	"github.com/kubemq-io/kubemq-community/pkg/authentication"
 	"github.com/kubemq-io/kubemq-community/pkg/entities"
 	"github.com/kubemq-io/kubemq-community/services/metrics"
 	pb "github.com/kubemq-io/protobuf/go"
@@ -32,11 +33,16 @@ type Server struct {
 }
 
 func NewServer(svc *services.SystemServices, appConfig *config.Config) (s *Server, err error) {
+	auth, err := authentication.New(appConfig.Authentication)
+	if err != nil {
+		return nil, err
+	}
 	opts := &options{
 		port:     appConfig.Grpc.Port,
 		maxSize:  appConfig.Grpc.BodyLimit,
 		security: appConfig.Security,
 		bufSize:  appConfig.Grpc.SubBuffSize,
+		auth:     auth,
 	}
 	s = &Server{
 		options:       opts,

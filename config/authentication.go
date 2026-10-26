@@ -6,6 +6,17 @@ var validAuthTypes = map[string]string{
 	"local": "local",
 }
 
+// SupportedJWTSignatureTypes lists the signatureType values the server can
+// verify. HMAC types take a shared secret as the key; the others take a PEM
+// public key.
+var SupportedJWTSignatureTypes = []string{
+	"HS256", "HS384", "HS512",
+	"RS256", "RS384", "RS512",
+	"PS256", "PS384", "PS512",
+	"ES256", "ES384", "ES512",
+	"EdDSA",
+}
+
 type JWTAuthenticationConfig struct {
 	Key           string `json:"key"`
 	FilePath      string `json:"filePath"`
@@ -18,6 +29,15 @@ func (jc *JWTAuthenticationConfig) Validate() error {
 	}
 	if jc.SignatureType == "" {
 		return NewConfigurationError("bad jwt configuration: missing jwt signature type")
+	}
+	supported := false
+	for _, t := range SupportedJWTSignatureTypes {
+		if strings.EqualFold(t, jc.SignatureType) {
+			supported = true
+		}
+	}
+	if !supported {
+		return NewConfigurationErrorf("bad jwt configuration: unsupported signature type %q, use one of %s", jc.SignatureType, strings.Join(SupportedJWTSignatureTypes, ", "))
 	}
 	if jc.Key == "" && jc.FilePath == "" {
 		return NewConfigurationError("bad jwt configuration: no verification key provided")

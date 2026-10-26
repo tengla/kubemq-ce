@@ -92,3 +92,22 @@ func Test_getConfigPathFromExec(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, c, "config.yaml")
 }
+
+func TestConfig_Redacted(t *testing.T) {
+	cfg := getConfigRecord()
+	cfg.Authentication.JwtConfig.Key = "jwt-secret"
+	cfg.Authentication.JwtConfig.SignatureType = "HS256"
+	cfg.Client.AuthToken = "client-token"
+	cfg.Security.Key.Data = "tls-private-key"
+	cfg.Security.Cert.Data = "tls-cert"
+
+	out := cfg.Redacted()
+	require.Equal(t, redactedValue, out.Authentication.JwtConfig.Key)
+	require.Equal(t, redactedValue, out.Client.AuthToken)
+	require.Equal(t, redactedValue, out.Security.Key.Data)
+	require.Equal(t, "tls-cert", out.Security.Cert.Data)
+	require.Equal(t, "HS256", out.Authentication.JwtConfig.SignatureType)
+	// The original is untouched.
+	require.Equal(t, "jwt-secret", cfg.Authentication.JwtConfig.Key)
+	require.Equal(t, "", getConfigRecord().Redacted().Client.AuthToken)
+}
