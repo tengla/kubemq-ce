@@ -1,35 +1,51 @@
-![Docker](https://github.com/kubemq-io/kubemq-community/actions/workflows/docker-image.yml/badge.svg) ![goreleaser](https://github.com/kubemq-io/kubemq-community/actions/workflows/goreleaser.yml/badge.svg) ![Go Report Card](https://goreportcard.com/badge/github.com/kubemq-io/kubemq-community)
-# What is KubeMQ Community?
+# kubemq-ce
 
-KubeMQ Community is the open-source version of KubeMQ, the Kubernetes native message broker.
-[More about KubeMQ](https://kubemq.io/)
+A fork of [KubeMQ Community](https://github.com/kubemq-io/kubemq-community), the open-source edition of the KubeMQ message broker. It is a single binary that serves queues, pub/sub (events and events store) and RPC (commands and queries) over gRPC and REST, with a built-in web dashboard. Licensed under Apache-2.0, like upstream.
 
-# New
+## How this fork differs from upstream
 
-## KubeMQ Web Interface
+- **No usage reporting.** Upstream sends a usage report (hostname, a host fingerprint, message counts and environment) to `api.kubemq.io` at startup and every 5 minutes. This fork removes that code entirely.
+- **Runs on Kubernetes.** Upstream refuses to start when it detects a Kubernetes pod. This fork starts there the same way it does in a standalone Docker container.
 
-Browse to [http://localhost:8080/](http://localhost:8080/) after installation and use the KubeMQ Web Interface to manage KubeMQ broker instance.
+The server is single-node: running several replicas gives you separate brokers with separate storage, not a cluster.
 
+The upstream Docker image (`kubemq/kubemq-community`) and upstream release binaries do not include these changes. Build from this repository instead.
 
-![](https://github.com/kubemq-io/kubemq-community/blob/7ae66097831b1c21121cea706d7f9112b77b74d8/images/dashboard.png "KubeMQ Dashboard")
+## Web interface
 
+Browse to [http://localhost:8080/](http://localhost:8080/) once the server is running to manage the broker from the dashboard.
 
+![](images/dashboard.png "KubeMQ Dashboard")
 
 # Installation
 
+There are no prebuilt images or release binaries for this fork yet.
+
 ## Docker
 
-Pull and run KubeMQ standalone docker container:
+Build the image and run it:
 
-``` bash  
-docker run -d -p 8080:8080 -p 50000:50000 -p 9090:9090 kubemq/kubemq-community:latest  
-```  
+```bash
+docker build --build-arg VERSION=v2.4.0 -t kubemq-ce .
+docker run -d -p 8080:8080 -p 50000:50000 -p 9090:9090 kubemq-ce
+```
 
-## Binaries
+Ports: `8080` web interface and API, `50000` gRPC, `9090` REST.
 
-1. Download the latest version of KubeMQ Community from [Releases](https://github.com/kubemq-io/kubemq-community/releases)
-2. Unpack the downloaded archive
-3. Run ```kubemq server```
+## From source
+
+Requires Go 1.19 or later.
+
+```bash
+go build -o kubemq -ldflags "-X 'main.version=v2.4.0'" .
+./kubemq server
+```
+
+The server writes its effective configuration to `./config.yaml` and stores data in `./store` (relative to the working directory).
+
+## Kubernetes
+
+Run the image built above as a single replica, and mount a persistent volume at `/kubemq/store` so messages survive pod restarts.
 
 # KubeMQ Connectors
 
@@ -43,15 +59,15 @@ docker run -d -p 8080:8080 -p 50000:50000 -p 9090:9090 kubemq/kubemq-community:l
 
 KubeMQ community edition comes with built-in CLI tool for interaction with KubeMQ server. Check out the docs:
 
-* [kubemq commands](https://github.com/kubemq-io/kubemq-community/blob/master/docs/cli/kubemq_commands.md)  - Execute
+* [kubemq commands](docs/cli/kubemq_commands.md)  - Execute
   Kubemq 'commands'
-* [kubemq events](https://github.com/kubemq-io/kubemq-community/blob/master/docs/cli/kubemq_events.md)     - Execute
+* [kubemq events](docs/cli/kubemq_events.md)     - Execute
   Kubemq 'events' Pub/Sub commands
-* [kubemq events_store](https://github.com/kubemq-io/kubemq-community/blob/master/docs/cli/kubemq_events_store.md)     -
+* [kubemq events_store](docs/cli/kubemq_events_store.md)     -
   Execute Kubemq 'Events-Store' Pub/Sub commands
-* [kubemq queries](https://github.com/kubemq-io/kubemq-community/blob/master/docs/cli/kubemq_queries.md)   - Execute
+* [kubemq queries](docs/cli/kubemq_queries.md)   - Execute
   Kubemq 'queries'
-* [kubemq queues](https://github.com/kubemq-io/kubemq-community/blob/master/docs/cli/kubemq_queues.md)     - Execute
+* [kubemq queues](docs/cli/kubemq_queues.md)     - Execute
   Kubemq 'queues' commands
 
 # KubeMQ SDKs
