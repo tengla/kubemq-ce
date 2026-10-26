@@ -16,6 +16,7 @@ export const snapshot = reactive({
   channelRates: {}, // "type/name" -> msg/s
   channelHistory: {}, // "type/name" -> [msg/s, ...]
   error: null,
+  starting: false, // the server is up but the broker is not ready yet (503)
   loading: true,
 })
 
@@ -115,9 +116,9 @@ export async function pollSnapshot() {
   inFlight = true
   try {
     const response = await fetch('/api/snapshot', { cache: 'no-store' })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const body = await response.json()
-    if (body.error) throw new Error(body.error_string || 'snapshot error')
+    snapshot.starting = response.status === 503
+    const body = await response.json().catch(() => null)
+    if (!response.ok || !body || body.error) throw new Error(body?.error_string || `HTTP ${response.status}`)
     record(body.data)
     snapshot.error = null
   } catch (err) {

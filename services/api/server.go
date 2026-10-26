@@ -123,7 +123,7 @@ func CreateApiServer(ctx context.Context, broker *broker.Service, appConfigs ...
 		_ = monitor.MonitorHandlerFunc(s.context, c)
 		return nil
 	})
-	apiGroup := e.Group("/api")
+	apiGroup := e.Group("/api", s.apiService.requireReady)
 	apiGroup.GET("/snapshot", func(c echo.Context) error {
 		return s.apiService.getSnapshot(c)
 	})

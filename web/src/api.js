@@ -5,9 +5,8 @@ export async function apiRequest(type, data) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type, data }),
   })
-  if (!response.ok) throw new Error(`HTTP ${response.status}`)
-  const body = await response.json()
-  if (body.error) throw new Error(body.error_string || 'Request failed')
+  const body = await response.json().catch(() => null)
+  if (!response.ok || !body || body.error) throw new Error(body?.error_string || `HTTP ${response.status}`)
   return body.data
 }
 

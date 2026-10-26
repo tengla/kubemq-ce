@@ -16,6 +16,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -45,6 +46,9 @@ type service struct {
 	logger                   *logging.Logger
 	lastLoadedEntitiesGroups map[string]*api.EntitiesGroup
 	actionClient             *actions.InternalClient
+	// ready is set once init has run. The API server starts listening before
+	// the broker is up, so requests can arrive before there is state to serve.
+	ready atomic.Bool
 }
 
 func newService(appConfig *config.Config, broker *broker.Service, exp *metrics.Exporter) *service {
@@ -75,8 +79,20 @@ func (s *service) init(ctx context.Context, logger *logging.Logger, array *array
 	if err != nil {
 		return fmt.Errorf("error initializing actions client: %s", err.Error())
 	}
+	s.ready.Store(true)
 	go s.run(ctx)
 	return nil
+}
+
+// requireReady answers 503 until init has run, instead of letting handlers
+// dereference state that does not exist yet.
+func (s *service) requireReady(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if !s.ready.Load() {
+			return NewResponse(c).SetErrorWithText("broker is starting").SetHttpCode(http.StatusServiceUnavailable).Send()
+		}
+		return next(c)
+	}
 }
 func (s *service) stop() error {
 	return s.db.Close()

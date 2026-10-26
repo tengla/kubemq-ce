@@ -55,6 +55,7 @@ provide('openMenu', () => (menuOpen.value = true))
       :host="snapshot.host"
       :by-type="snapshot.byType"
       :online="online"
+      :starting="snapshot.starting"
       :dark="dark"
       :open="menuOpen"
       @toggle-theme="toggleTheme"

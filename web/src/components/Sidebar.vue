@@ -7,6 +7,7 @@ defineProps({
   host: { type: Object, default: null },
   byType: { type: Object, default: null },
   online: { type: Boolean, default: false },
+  starting: { type: Boolean, default: false },
   dark: { type: Boolean, default: false },
   open: { type: Boolean, default: false },
 })
@@ -20,10 +21,10 @@ defineEmits(['toggle-theme'])
       <span>{{ brand }}</span>
     </div>
     <div class="node">
-      <span class="status-dot" :style="{ background: online ? 'var(--good)' : 'var(--critical)' }" />
+      <span class="status-dot" :style="{ background: online ? 'var(--good)' : starting ? 'var(--warning)' : 'var(--critical)' }" />
       <div>
         <div class="node-name" :title="host?.host">{{ host?.host ?? 'Connecting…' }}</div>
-        <div class="muted small">{{ online ? host?.role ?? 'Standalone' : 'Unreachable' }}</div>
+        <div class="muted small">{{ online ? host?.role ?? 'Standalone' : starting ? 'Starting…' : 'Unreachable' }}</div>
       </div>
     </div>
 
