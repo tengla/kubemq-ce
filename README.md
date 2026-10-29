@@ -180,7 +180,7 @@ The `kubemq` binary is also a command-line client:
 
 See the CLI reference for [queues](docs/cli/kubemq_queues.md), [events](docs/cli/kubemq_events.md), [events store](docs/cli/kubemq_events_store.md), [commands](docs/cli/kubemq_commands.md) and [queries](docs/cli/kubemq_queries.md).
 
-kubemq-ce keeps upstream's gRPC and REST API, so the upstream KubeMQ SDKs connect to it: [Go](https://github.com/kubemq-io/kubemq-go), [Java](https://github.com/kubemq-io/kubemq-Java), [Python](https://github.com/kubemq-io/kubemq-Python), [Node](https://github.com/kubemq-io/kubemq-js) and [C#](https://github.com/kubemq-io/kubemq-CSharp). Upstream's [documentation](https://docs.kubemq.io/) explains the messaging patterns. The SDKs' channel management calls (`createChannel`, `listChannels`, `deleteChannel` and their per-type variants) work too.
+kubemq-ce keeps upstream's gRPC and REST API, so the upstream KubeMQ SDKs connect to it: [Go](https://github.com/kubemq-io/kubemq-go), [Java](https://github.com/kubemq-io/kubemq-Java), [Python](https://github.com/kubemq-io/kubemq-Python), [Node](https://github.com/kubemq-io/kubemq-js) and [C#](https://github.com/kubemq-io/kubemq-CSharp). Upstream's [documentation](https://docs.kubemq.io/) explains the messaging patterns. The SDKs' channel management calls (`createChannel`, `listChannels`, `deleteChannel` and their per-type variants) work too, and so does the query cache: a query with a cache key gets the stored response of an earlier query with the same key on the same channel, marked as a cache hit, until its TTL runs out. The SDKs disagree on the TTL's unit, so values under 1000 are read as seconds and larger ones as milliseconds.
 
 ### CloudEvents
 

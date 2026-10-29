@@ -196,7 +196,19 @@ func TestExporter_Report(t *testing.T) {
 	s, err := e.Stats()
 	require.NoError(t, err)
 	require.NotNil(t, s)
-	require.Equal(t, 41, len(s))
+	kinds := map[string]int{}
+	for _, st := range s {
+		kinds[st.Name]++
+	}
+	// Every reported label set also gets a last_seen gauge.
+	require.Equal(t, map[string]int{
+		"messages_count":     16,
+		"messages_volume":    15,
+		"errors_count":       8,
+		"clients_count":      1,
+		"messages_pending":   1,
+		"messages_last_seen": 19,
+	}, kinds)
 	cs, err := e.Channels()
 	require.NoError(t, err)
 	require.NotEmpty(t, cs)

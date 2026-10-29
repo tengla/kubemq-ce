@@ -172,11 +172,14 @@ func TestMonitorHandlerFunc_Events(t *testing.T) {
 	result, err := c.SendEvents(ctx, msg)
 	require.NoError(t, err)
 	require.True(t, result.Sent)
-	rxMsg := &pb.EventReceive{}
+	// The monitor sends what the dashboard shows: the message with its body
+	// decoded as text or JSON.
+	rxMsg := &TransportPubSubMessageDto{}
 	msgRcvStr := <-rxChan
 
 	err = json.Unmarshal([]byte(msgRcvStr), rxMsg)
 	require.NoError(t, err)
-	require.EqualValues(t, msg.Channel, rxMsg.Channel)
+	require.Equal(t, msg.Metadata, rxMsg.Metadata)
+	require.Equal(t, string(msg.Body), rxMsg.Body)
 
 }

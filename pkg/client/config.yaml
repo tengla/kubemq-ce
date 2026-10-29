@@ -1,5 +1,8 @@
 api:
   port: 10100
+audit:
+  enable: false
+  filePath: ""
 authentication:
   config: ""
   enable: false
@@ -7,13 +10,13 @@ authentication:
     filePath: ""
     key: ""
     signatureType: ""
+  revokedTokensFile: ""
   type: ""
 authorization:
   autoReload: 0
   enable: false
   filePath: ""
   policyData: ""
-  url: ""
 broker:
   diskSyncSeconds: 60
   maxConn: 0

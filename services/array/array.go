@@ -50,6 +50,7 @@ type Array struct {
 	queueUpstreamClientsPool   *client.QueuePool
 	queueUpstreamCounter       *atomic.Uint64
 	internalRequestHandler     atomic.Value
+	queryCache                 *queryCache
 }
 
 // InternalRequestHandler answers a query sent to
@@ -85,6 +86,7 @@ func Start(ctx context.Context, appConfig *config.Config) (*Array, error) {
 		logger: logging.GetLogFactory().NewLogger("array"),
 
 		isShutdown:   atomic.NewBool(false),
+		queryCache:   newQueryCache(),
 		clientsCount: atomic.NewInt64(0),
 		queueClientsPool: client.NewQueuePool(ctx, &client.QueuePoolOptions{
 			KillAfter: 1 * time.Minute,
@@ -425,7 +427,15 @@ func (a *Array) SendQuery(ctx context.Context, req *pb.Request) (*pb.Response, e
 	if req.Channel == entities.ClusterInternalRequestsChannel {
 		return a.handleInternalRequest(ctx, req), nil
 	}
+	if req.CacheKey != "" {
+		if res, ok := a.queryCache.get(req); ok {
+			return res, nil
+		}
+	}
 	res, err := a.QuerySender.SendQuery(ctx, req)
+	if err == nil && req.CacheKey != "" {
+		a.queryCache.put(req, res)
+	}
 	return res, err
 }
 

@@ -115,6 +115,9 @@ func setupWithQueueClient(ctx context.Context, t *testing.T) (*client.QueueClien
 	tmp, err := ioutil.TempDir("./", "test_monitor")
 	require.NoError(t, err)
 	appConfig := config.GetAppConfig("../../test/")
+	// The monitor reads the pipe from this shared config, so each test
+	// needs a fresh one: the previous test's pipe is closed.
+	appConfig.Broker.MemoryPipe = pipe.NewPipe(nuid.Next())
 	appConfig.Broker.MonitoringPort = int(testPort.Inc())
 	appConfig.Api.Port = int(testPort.Inc())
 	appConfig.Store.StorePath = tmp
