@@ -1,6 +1,6 @@
 # TODO
 
-Features that would bring kubemq-ce closer to KubeMQ v3, ranked by value for effort.
+The [roadmap](#roadmap) at the end is the plan for making kubemq-ce a production-grade broker. The sections before it list features that would bring it closer to KubeMQ v3, ranked by value for effort.
 
 ## Quick wins (days each)
 
@@ -14,20 +14,85 @@ Features that would bring kubemq-ce closer to KubeMQ v3, ranked by value for eff
 
 - [x] **OpenTelemetry tracing**. Add interceptors to gRPC and REST, and carry the trace context in message tags so traces continue from producer through broker to consumer. Metrics are already in Prometheus. v3: OTLP.
 - [ ] **KEDA autoscaling**. Autoscale consumers on queue depth. Prometheus already exposes the numbers, so start with docs and an example `ScaledObject`; a proper external scaler can come after. v3: KEDA integration.
-- [ ] **MQTT gateway**. Probably a separate MQTT front end (for example mochi-mqtt) mapped onto events and events store. NATS's own MQTT support needs JetStream, which this broker doesn't use; check what the embedded NATS fork in `kubemq-io/broker` supports first. v3: native MQTT.
 
 ## The big one
 
-- [ ] **Move storage to JetStream**. This is the path to replicated, clustered storage. NATS Streaming, the current storage layer, is deprecated upstream; JetStream has replication built in (Raft), which is essentially what v3 added. Weeks of work: queue behaviour (visibility timeouts, peek, ack-all, dead-letter queues) is implemented in `pkg/client` on top of NATS Streaming and needs rewriting.
+- [ ] **Replace the `kubemq-io/broker` fork with `nats-server` and `nats.go`, storage on JetStream**. The fork bundles NATS 2.1.9 (about 2020) and NATS Streaming, which is deprecated with no maintained version, so security fixes no longer come from upstream. This is a maintenance job first; replication and clustering come with it but stay optional. Weeks of work, mostly rewriting queues in `pkg/client`. See roadmap step 4.
 
 ## Not planned
 
 - **Native Kafka, AMQP, SQS or Pub/Sub protocols:** each is a large project. Users who need them are better served by real Kafka or RabbitMQ.
 - **More SDKs:** the upstream SDKs already work against this server.
 - **FIPS builds:** only matter if certification is needed.
+- **MQTT:** it's a protocol for devices on unreliable networks, and services talking to each other are better served by the SDKs over gRPC, which have queues and request/reply that MQTT lacks. Reconsider only if something that speaks nothing but MQTT has to publish, such as an industrial gateway; after roadmap step 4, NATS's own MQTT support makes that a small job. v3: native MQTT.
 
-## Suggested order
+## Roadmap
 
-1. KEDA docs and an example `ScaledObject`: small, and useful to anyone running consumers on Kubernetes.
-2. JetStream, as a separate project, if HA is wanted.
-3. MQTT, if devices need to publish directly.
+What it takes to go from a well-run fork to a broker people can run in production, in order. Each step makes the next one safer.
+
+### 0. Positioning
+
+kubemq-ce is the KubeMQ-compatible broker without the enterprise licence: the same SDKs, API and messaging patterns, fully open source under Apache-2.0, in one binary with no telemetry. KubeMQ's enterprise edition is priced for large companies, which leaves out the teams that would otherwise use it.
+
+Who it's for, in order:
+
+1. **Teams already on KubeMQ.** Their producers and consumers are written against the KubeMQ SDKs. Moving to RabbitMQ or Kafka means rewriting them; moving to kubemq-ce means changing an address. This is the strongest case, so compatibility with the upstream SDKs is the product.
+2. **New projects that want a simple broker.** Five clear patterns, request/reply built in, a dashboard, and one binary to run. Be honest in the README that NATS, RabbitMQ and Redpanda are free and mature alternatives too; kubemq-ce competes on simplicity there, not on price.
+
+The enterprise features such teams would pay for are mostly done: access control, audit logging, revocable API keys, OpenTelemetry, CloudEvents and MCP. The big remaining gap is clustering and high availability, which comes with replacing the broker fork (step 4).
+
+- [ ] **Put this at the top of the README.** Lead with compatibility and the open licence, and keep the comparison with upstream factual.
+- [ ] **Settle the name before publishing images or announcing anything.** "KubeMQ" is likely a trademark of KubeMQ Ltd, and the Apache-2.0 licence covers the code, not the name. A distinct name with "compatible with KubeMQ" in the description is the safer path for a project others adopt. Check whether "kubemq-ce" is acceptable, or pick a new name and keep the module path change in mind.
+- [ ] **Treat SDK compatibility as the main promise.** The SDK smoke tests in step 1 should cover the Go, Python, Java and .NET SDKs, not just kubemq-js, and a compatibility table in the README should say which SDK versions are tested.
+
+### 1. CI and a reliable test suite
+
+- [ ] **Isolate the integration tests.** Every test in a package uses the same fixed API port from its `config.yaml`, and the port counters start at the same number each run, so two runs at once collide. Give each test free ports and its own temp store, as `services/api/mcp_test.go` does, and stop writing `config.yaml` during tests.
+- [ ] **Make the suite faster.** It takes about 13 minutes, mostly in `pkg/client` (6 min) and `interfaces/grpc` (4 min). Look for fixed sleeps and per-test broker startups that can be shared.
+- [ ] **Run CI on every pull request:** `go vet`, golangci-lint, the Go tests, the dashboard build (check that `assets/` matches `web/`) and `task smoke` against a freshly built server.
+- [ ] **Check more SDKs.** Add smoke tests for kubemq-go, kubemq-Python, kubemq-Java and kubemq-CSharp next to the kubemq-js one, and run them all in CI (see step 0).
+
+### 2. Releases
+
+- [ ] **Publish images and binaries.** Multi-arch images and release binaries from CI on each tag (`task release` exists but builds upstream's image name). Sign them, and generate an SBOM.
+- [ ] **Version and document changes.** Semantic versions, a changelog, and upgrade notes for anything that changes config or stored data.
+
+### 3. Backups
+
+- [ ] **Backup and restore** of the store, documented and tested, including a restore onto a new node. With one pod and one volume, this is what protects queued and stored messages from a lost disk, both before and after step 4.
+
+### 4. Replace the broker fork with maintained NATS
+
+Everything below `services/broker` and `pkg/client` comes from the `kubemq-io/broker` fork: the NATS server (`server/gnatsd`, version 2.1.9 from about 2020), the NATS Streaming server (`server/stan`) and both clients. NATS Streaming is deprecated with no maintained version, and the fork doesn't look actively maintained, so security fixes in that code would have to be made here. Replace it with the NATS project's own libraries: `github.com/nats-io/nats-server/v2`, embedded so kubemq stays one binary with an in-process connection instead of the memory pipe, and `github.com/nats-io/nats.go`, including its `jetstream` package.
+
+This is a maintenance job first. Replication, clustering and deduplication come with it, but one node stays the default and nothing has to be clustered. NATS Streaming can't be kept on a modern NATS server for long, so the stored patterns have to move to JetStream in the same project.
+
+- [ ] **Spike first.** Embed current `nats-server` with JetStream next to the existing broker and port events store, the simplest stored pattern, to see what the queue rewrite involves.
+- [ ] **Move events, commands and queries to `nats.go`.** They use plain publish/subscribe and request/reply, so this is mostly mechanical.
+- [ ] **Rewrite queues and events store on JetStream.** Queues are the bulk of the work: visibility timeouts, peek, ack-all, delays and dead-letter queues in `pkg/client` need rewriting on JetStream consumers.
+- [ ] **Keep one node the default.** Streams start with one replica and file storage under `store/`, so `kubemq server` on a laptop or in a single pod works as it does today. Set JetStream's memory and disk limits from config.
+- [ ] **Migrate existing data.** An export of queues and events store from the old store and an import into JetStream, run once on upgrade, or document that an upgrade starts empty.
+- [ ] **Remove the fork** from `go.mod` once nothing imports it.
+- [ ] **Optional: clustering.** Three-node clusters with streams raised to three replicas (Raft needs a quorum; two nodes give no fault tolerance), stable node names and a `cluster` config section. A StatefulSet example for Kubernetes. Only needed when the broker must survive a node failure.
+- [ ] **Use what JetStream brings.** Deduplication by message ID within a window, so a retried send can't create a duplicate. Work-queue retention for queues. The key-value store for state such as the query cache.
+
+### 5. Benchmarks
+
+- [ ] **Measure before and after the move.** Throughput and latency per pattern, with message sizes from 100 B to 1 MB, on one node and later on a cluster. Keep the harness in the repo so regressions show up, and publish the numbers.
+
+### 6. Operations
+
+- [ ] **Helm chart** for a single node first, then a cluster, with the persistent volume, probes (`/health`, `/ready`), resource limits and the auth, tracing and audit settings.
+- [ ] **Behave well when the disk fills:** refuse new messages with a clear error instead of failing in the storage layer, and expose disk use as a metric.
+- [ ] **KEDA** docs and an example `ScaledObject` (see above).
+
+### 7. Hardening
+
+- [ ] **TLS everywhere by default in the examples**, including the dashboard port, and document running behind a TLS proxy.
+- [ ] **Fuzz the inputs that parse untrusted data:** the REST handlers, CloudEvents, the MCP tools and the authorization rules.
+- [ ] **Rate limits and payload limits per client,** so one misbehaving client can't starve the others.
+
+### 8. Messaging features
+
+- [ ] **Tag filters on subscriptions,** for example only events with `region=eu`. Messages already carry tags.
+- [ ] **Ordering keys for queues:** messages with the same key go to one consumer at a time. Easier on JetStream.
