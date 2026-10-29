@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"github.com/kubemq-io/kubemq-community/config"
 	"github.com/kubemq-io/kubemq-community/interfaces/grpc/middleware/recovery"
-	"github.com/kubemq-io/kubemq-community/pkg/authentication"
+	"github.com/kubemq-io/kubemq-community/pkg/guard"
 	"github.com/kubemq-io/kubemq-community/services"
 	"go.uber.org/atomic"
 	"net"
@@ -28,7 +28,7 @@ type options struct {
 	security *config.SecurityConfig
 	maxSize  int
 	bufSize  int
-	auth     *authentication.Authenticator
+	guard    *guard.Guard
 }
 
 func recoveryFunc(p interface{}) (err error) {
@@ -99,9 +99,9 @@ func configureServer(svc *services.SystemServices, logger *logging.Logger, opts 
 		middleware.UnaryLoggerServerInterceptor(logger),
 		middleware.UnaryTrafficServerInterceptor(acceptTraffic),
 	}
-	if opts.auth != nil {
-		streamInterceptors = append(streamInterceptors, middleware.StreamAuthServerInterceptor(opts.auth))
-		unaryInterceptors = append(unaryInterceptors, middleware.UnaryAuthServerInterceptor(opts.auth))
+	if opts.guard != nil {
+		streamInterceptors = append(streamInterceptors, middleware.StreamAuthServerInterceptor(opts.guard))
+		unaryInterceptors = append(unaryInterceptors, middleware.UnaryAuthServerInterceptor(opts.guard))
 	}
 	connOptions = append(connOptions, grpc.StreamInterceptor(middleware.ChainStreamServer(streamInterceptors...)))
 	connOptions = append(connOptions, grpc.UnaryInterceptor(middleware.ChainUnaryServer(unaryInterceptors...)))

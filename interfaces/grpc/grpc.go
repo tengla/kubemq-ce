@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/kubemq-io/kubemq-community/config"
-	"github.com/kubemq-io/kubemq-community/pkg/authentication"
 	"github.com/kubemq-io/kubemq-community/pkg/entities"
+	"github.com/kubemq-io/kubemq-community/pkg/guard"
 	"github.com/kubemq-io/kubemq-community/services/metrics"
 	pb "github.com/kubemq-io/protobuf/go"
 	"go.uber.org/atomic"
@@ -33,7 +33,7 @@ type Server struct {
 }
 
 func NewServer(svc *services.SystemServices, appConfig *config.Config) (s *Server, err error) {
-	auth, err := authentication.New(appConfig.Authentication)
+	g, err := guard.New(appConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +42,7 @@ func NewServer(svc *services.SystemServices, appConfig *config.Config) (s *Serve
 		maxSize:  appConfig.Grpc.BodyLimit,
 		security: appConfig.Security,
 		bufSize:  appConfig.Grpc.SubBuffSize,
-		auth:     auth,
+		guard:    g,
 	}
 	s = &Server{
 		options:       opts,
@@ -131,6 +131,9 @@ func (s *Server) Close() {
 		s.services.Broker.UnRegisterToNotifyState("grpc")
 	}
 	s.grpcServer.Stop()
+	if s.options.guard != nil {
+		s.options.guard.Close()
+	}
 	s.logger.Warnw("grpc server shutdown completed")
 }
 func (s *Server) UpdateBrokerStatus(state bool) {
@@ -159,9 +162,18 @@ func (s *Server) SendEvent(ctx context.Context, event *pb.Event) (*pb.Result, er
 }
 func (s *Server) SendEventsStream(stream pb.Kubemq_SendEventsStreamServer) error {
 	for {
-		event, err := stream.Recv()
+		event := &pb.Event{}
+		err := stream.RecvMsg(event)
 		if err == io.EOF {
 			break
+		}
+		if status.Code(err) == codes.PermissionDenied {
+			// Refuse this event and keep the stream for the others.
+			if err := stream.Send(&pb.Result{EventID: event.EventID, Sent: false, Error: status.Convert(err).Message()}); err != nil {
+				s.logger.Errorw("error on send result", "error", err)
+				return status.Error(codes.Internal, err.Error())
+			}
+			continue
 		}
 		if err != nil {
 			s.logger.Errorw("error on receive event from stream", "error", err)
@@ -400,8 +412,18 @@ func (s *Server) StreamQueueMessage(stream pb.Kubemq_StreamQueueMessageServer) e
 	}()
 	go func() {
 		for {
-			messagesRequest, err := stream.Recv()
-			if err == io.EOF {
+			messagesRequest := &pb.StreamQueueMessagesRequest{}
+			err := stream.RecvMsg(messagesRequest)
+			if status.Code(err) == codes.PermissionDenied {
+				// Refuse this request and keep the stream for the others.
+				select {
+				case messagesResponsesCh <- &pb.StreamQueueMessagesResponse{RequestID: messagesRequest.RequestID, StreamRequestTypeData: messagesRequest.StreamRequestTypeData, IsError: true, Error: status.Convert(err).Message()}:
+					continue
+				case <-ctx.Done():
+					return
+				}
+			}
+			if err != nil {
 				return
 			}
 			select {
@@ -453,8 +475,18 @@ func (s *Server) QueuesUpstream(stream pb.Kubemq_QueuesUpstreamServer) error {
 	}()
 	go func() {
 		for {
-			request, err := stream.Recv()
-			if err == io.EOF {
+			request := &pb.QueuesUpstreamRequest{}
+			err := stream.RecvMsg(request)
+			if status.Code(err) == codes.PermissionDenied {
+				// Refuse this request and keep the stream for the others.
+				select {
+				case upstreamResponsesCh <- &pb.QueuesUpstreamResponse{RefRequestID: request.RequestID, IsError: true, Error: status.Convert(err).Message()}:
+					continue
+				case <-ctx.Done():
+					return
+				}
+			}
+			if err != nil {
 				return
 			}
 			select {
@@ -500,8 +532,18 @@ func (s *Server) QueuesDownstream(stream pb.Kubemq_QueuesDownstreamServer) error
 	}()
 	go func() {
 		for {
-			request, err := stream.Recv()
-			if err == io.EOF {
+			request := &pb.QueuesDownstreamRequest{}
+			err := stream.RecvMsg(request)
+			if status.Code(err) == codes.PermissionDenied {
+				// Refuse this request and keep the stream for the others.
+				select {
+				case downstreamResponsesCh <- &pb.QueuesDownstreamResponse{RefRequestId: request.RequestID, RequestTypeData: request.RequestTypeData, IsError: true, Error: status.Convert(err).Message()}:
+					continue
+				case <-ctx.Done():
+					return
+				}
+			}
+			if err != nil {
 				return
 			}
 			select {

@@ -11,12 +11,20 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/kubemq-io/kubemq-community/config"
 	"github.com/kubemq-io/kubemq-community/pkg/entities"
+	"github.com/kubemq-io/kubemq-community/pkg/filewatch"
+	"github.com/kubemq-io/kubemq-community/pkg/logging"
+	"github.com/nats-io/nuid"
 )
+
+// revocationCheckInterval is how often the revoked tokens file is checked
+// for changes, which bounds how long a newly revoked token keeps working.
+const revocationCheckInterval = 5 * time.Second
 
 type Authenticator struct {
 	method    jwt.SigningMethod
 	verifyKey any
 	parser    *jwt.Parser
+	revoked   *filewatch.File[map[string]bool]
 }
 
 // New returns nil when authentication is disabled, so callers can skip the
@@ -25,7 +33,33 @@ func New(cfg *config.AuthenticationConfig) (*Authenticator, error) {
 	if cfg == nil || !cfg.Enable {
 		return nil, nil
 	}
-	return newAuthenticator(cfg.JwtConfig)
+	a, err := newAuthenticator(cfg.JwtConfig)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.RevokedTokensFile != "" {
+		logger := logging.GetLogFactory().NewLogger("authentication")
+		a.revoked, err = filewatch.New(cfg.RevokedTokensFile, revocationCheckInterval, parseRevokedTokens, func(err error) {
+			logger.Errorf("error reloading revoked tokens, keeping the previous list: %s", err.Error())
+		})
+		if err != nil {
+			return nil, fmt.Errorf("%wrevoked tokens file: %s", entities.ErrAuthInvalidKeyFile, err)
+		}
+	}
+	return a, nil
+}
+
+// parseRevokedTokens reads one token ID per line. Blank lines and text after
+// a # are ignored, so each ID can carry a note on why it was revoked.
+func parseRevokedTokens(data []byte) (map[string]bool, error) {
+	ids := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		line, _, _ = strings.Cut(line, "#")
+		if id := strings.TrimSpace(line); id != "" {
+			ids[id] = true
+		}
+	}
+	return ids, nil
 }
 
 func newAuthenticator(cfg *config.JWTAuthenticationConfig) (*Authenticator, error) {
@@ -79,16 +113,20 @@ func (a *Authenticator) Claims(token string) (*jwt.RegisteredClaims, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w%s", entities.ErrAuthInvalidAuthToken, err)
 	}
+	if a.revoked != nil && claims.ID != "" && a.revoked.Get()[claims.ID] {
+		return nil, fmt.Errorf("%wtoken %s is revoked", entities.ErrAuthInvalidAuthToken, claims.ID)
+	}
 	return claims, nil
 }
 
-// Sign creates a token that the configured key verifies. HMAC tokens are
-// signed with the configured secret. The other methods need the private key
-// matching the configured public key, as PEM.
-func Sign(cfg *config.JWTAuthenticationConfig, privateKey []byte, subject string, ttl time.Duration) (string, error) {
+// Sign creates a token that the configured key verifies and returns it with
+// its ID (the jti claim), which is what a revocation list names. HMAC tokens
+// are signed with the configured secret. The other methods need the private
+// key matching the configured public key, as PEM.
+func Sign(cfg *config.JWTAuthenticationConfig, privateKey []byte, subject string, ttl time.Duration) (token, id string, err error) {
 	auth, err := newAuthenticator(cfg)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	var signKey any
 	switch auth.method.(type) {
@@ -102,23 +140,23 @@ func Sign(cfg *config.JWTAuthenticationConfig, privateKey []byte, subject string
 		signKey, err = jwt.ParseEdPrivateKeyFromPEM(privateKey)
 	}
 	if err != nil {
-		return "", fmt.Errorf("invalid private key for %s: %w", auth.method.Alg(), err)
+		return "", "", fmt.Errorf("invalid private key for %s: %w", auth.method.Alg(), err)
 	}
 	now := time.Now()
-	claims := jwt.RegisteredClaims{Subject: subject, IssuedAt: jwt.NewNumericDate(now)}
+	claims := jwt.RegisteredClaims{ID: nuid.Next(), Subject: subject, IssuedAt: jwt.NewNumericDate(now)}
 	if ttl > 0 {
 		claims.ExpiresAt = jwt.NewNumericDate(now.Add(ttl))
 	}
-	token, err := jwt.NewWithClaims(auth.method, claims).SignedString(signKey)
+	token, err = jwt.NewWithClaims(auth.method, claims).SignedString(signKey)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	// Check the result against the configured key, so a private key that
 	// doesn't match it fails here instead of at the server.
 	if err := auth.Verify(token); err != nil {
-		return "", fmt.Errorf("the private key does not match the configured key: %w", err)
+		return "", "", fmt.Errorf("the private key does not match the configured key: %w", err)
 	}
-	return token, nil
+	return token, claims.ID, nil
 }
 
 // BareToken trims whitespace and an optional "Bearer " prefix.

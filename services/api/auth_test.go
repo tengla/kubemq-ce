@@ -4,12 +4,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kubemq-io/kubemq-community/config"
+	"github.com/kubemq-io/kubemq-community/pkg/audit"
 	"github.com/kubemq-io/kubemq-community/pkg/authentication"
+	"github.com/kubemq-io/kubemq-community/pkg/guard"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 )
@@ -18,9 +22,17 @@ var testJWT = &config.JWTAuthenticationConfig{Key: "dashboard-test-secret-with-e
 
 func authServer(t *testing.T, enabled bool) (*Server, *echo.Echo) {
 	t.Helper()
-	auth, err := authentication.New(&config.AuthenticationConfig{Enable: enabled, JwtConfig: testJWT})
+	return authServerWith(t, &config.Config{Authentication: &config.AuthenticationConfig{Enable: enabled, JwtConfig: testJWT}})
+}
+
+func authServerWith(t *testing.T, cfg *config.Config) (*Server, *echo.Echo) {
+	t.Helper()
+	g, err := guard.New(cfg)
 	require.NoError(t, err)
-	s := &Server{auth: auth, cookieName: sessionCookieName(8080)}
+	s := &Server{guard: g, cookieName: sessionCookieName(8080)}
+	if g != nil {
+		s.auth = g.Authenticator()
+	}
 	e := echo.New()
 	e.GET("/api/auth/session", s.handleSession)
 	e.POST("/api/auth/login", s.handleLogin)
@@ -66,7 +78,7 @@ func sessionOf(t *testing.T, rec *httptest.ResponseRecorder) sessionInfo {
 
 func sign(t *testing.T, ttl time.Duration) string {
 	t.Helper()
-	token, err := authentication.Sign(testJWT, nil, "alice", ttl)
+	token, _, err := authentication.Sign(testJWT, nil, "alice", ttl)
 	require.NoError(t, err)
 	return token
 }
@@ -156,4 +168,52 @@ func TestDashboardAuth_LoginWithoutExpiry(t *testing.T) {
 	require.Len(t, cookies, 1)
 	require.True(t, cookies[0].Expires.IsZero(), "a token without exp gives a browser-session cookie")
 	require.Nil(t, sessionOf(t, rec).ExpiresAt)
+}
+
+func TestDashboardAuth_AdminOnly(t *testing.T) {
+	auditFile := filepath.Join(t.TempDir(), "audit.log")
+	_, e := authServerWith(t, &config.Config{
+		Authentication: &config.AuthenticationConfig{Enable: true, JwtConfig: testJWT},
+		Authorization: &config.AuthorizationConfig{Enable: true, PolicyData: `
+- subject: alice
+  actions: [admin]
+- subject: bob
+  channels: ["*"]
+  actions: [send, receive, manage]
+`},
+		Audit: &config.AuditConfig{Enable: true, FilePath: auditFile},
+	})
+	alice := sign(t, time.Hour)
+	bob, _, err := authentication.Sign(testJWT, nil, "bob", time.Hour)
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusOK, serve(e, http.MethodGet, "/api/snapshot", "", withHeader("Authorization", alice)).Code)
+	rec := serve(e, http.MethodGet, "/api/snapshot", "", withHeader("Authorization", bob))
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Contains(t, rec.Body.String(), "bob may not use the dashboard")
+
+	rec = serve(e, http.MethodPost, "/api/auth/login", `{"token":"`+bob+`"}`)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Empty(t, rec.Result().Cookies())
+	require.Equal(t, sessionInfo{Enabled: true}, sessionOf(t, serve(e, http.MethodGet, "/api/auth/session", "", withCookie(bob))))
+	require.Equal(t, http.StatusOK, serve(e, http.MethodPost, "/api/auth/login", `{"token":"`+alice+`"}`).Code)
+
+	var entries []audit.Entry
+	data, err := os.ReadFile(auditFile)
+	require.NoError(t, err)
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var entry audit.Entry
+		require.NoError(t, json.Unmarshal([]byte(line), &entry))
+		entries = append(entries, entry)
+	}
+	// Allowed snapshot polls are not audited; refusals and sign-ins are.
+	require.Len(t, entries, 3)
+	require.Equal(t, "bob", entries[0].Subject)
+	require.Equal(t, audit.Denied, entries[0].Outcome)
+	require.Equal(t, "/api/snapshot", entries[0].Operation)
+	require.Equal(t, "/api/auth/login", entries[1].Operation)
+	require.Equal(t, audit.Denied, entries[1].Outcome)
+	require.Equal(t, "alice", entries[2].Subject)
+	require.Equal(t, audit.Allowed, entries[2].Outcome)
+	require.Equal(t, "api", entries[2].Transport)
 }

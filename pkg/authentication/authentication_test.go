@@ -57,7 +57,7 @@ func TestVerify_HMAC(t *testing.T) {
 	auth, err := newAuthenticator(cfg)
 	require.NoError(t, err)
 
-	valid, err := Sign(cfg, nil, "orders", time.Hour)
+	valid, _, err := Sign(cfg, nil, "orders", time.Hour)
 	require.NoError(t, err)
 	expired, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
@@ -107,7 +107,7 @@ func TestVerify_KeyFile(t *testing.T) {
 	require.NoError(t, err)
 	// A token signed with the inline secret verifies against the file, so the
 	// trailing newline is not part of the key.
-	token, err := Sign(hmacConfig(), nil, "", 0)
+	token, _, err := Sign(hmacConfig(), nil, "", 0)
 	require.NoError(t, err)
 	require.NoError(t, auth.Verify(token))
 }
@@ -144,7 +144,7 @@ func TestSign_Asymmetric(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.alg, func(t *testing.T) {
 			cfg := &config.JWTAuthenticationConfig{Key: string(tt.publicKey), SignatureType: tt.alg}
-			token, err := Sign(cfg, tt.privateKey, "svc", time.Hour)
+			token, _, err := Sign(cfg, tt.privateKey, "svc", time.Hour)
 			require.NoError(t, err)
 			auth, err := newAuthenticator(cfg)
 			require.NoError(t, err)
@@ -154,12 +154,12 @@ func TestSign_Asymmetric(t *testing.T) {
 
 	t.Run("mismatched private key", func(t *testing.T) {
 		cfg := &config.JWTAuthenticationConfig{Key: string(pub(&rsaKey.PublicKey)), SignatureType: "RS256"}
-		_, err := Sign(cfg, priv(otherRSA), "svc", 0)
+		_, _, err := Sign(cfg, priv(otherRSA), "svc", 0)
 		require.ErrorContains(t, err, "does not match")
 	})
 	t.Run("missing private key", func(t *testing.T) {
 		cfg := &config.JWTAuthenticationConfig{Key: string(pub(&rsaKey.PublicKey)), SignatureType: "RS256"}
-		_, err := Sign(cfg, nil, "svc", 0)
+		_, _, err := Sign(cfg, nil, "svc", 0)
 		require.Error(t, err)
 	})
 }
@@ -168,4 +168,36 @@ func TestUsesHMAC(t *testing.T) {
 	require.True(t, UsesHMAC(&config.JWTAuthenticationConfig{SignatureType: "hs512"}))
 	require.False(t, UsesHMAC(&config.JWTAuthenticationConfig{SignatureType: "RS256"}))
 	require.False(t, UsesHMAC(&config.JWTAuthenticationConfig{SignatureType: "bogus"}))
+}
+
+func TestRevokedTokens(t *testing.T) {
+	cfg := hmacConfig()
+	keep, keepID, err := Sign(cfg, nil, "orders", time.Hour)
+	require.NoError(t, err)
+	revoke, revokeID, err := Sign(cfg, nil, "orders", time.Hour)
+	require.NoError(t, err)
+	require.NotEqual(t, keepID, revokeID)
+	plain, err := newAuthenticator(cfg)
+	require.NoError(t, err)
+	claims, err := plain.Claims(revoke)
+	require.NoError(t, err)
+	require.Equal(t, revokeID, claims.ID)
+
+	path := filepath.Join(t.TempDir(), "revoked")
+	require.NoError(t, os.WriteFile(path, []byte("# leaked in a log\n"+revokeID+"  # 2026-10-29\n\n"), 0o600))
+	auth, err := New(&config.AuthenticationConfig{Enable: true, JwtConfig: cfg, RevokedTokensFile: path})
+	require.NoError(t, err)
+	require.NoError(t, auth.Verify(keep))
+	err = auth.Verify(revoke)
+	require.ErrorIs(t, err, entities.ErrAuthInvalidAuthToken)
+	require.Contains(t, err.Error(), "revoked")
+
+	_, err = New(&config.AuthenticationConfig{Enable: true, JwtConfig: cfg, RevokedTokensFile: filepath.Join(t.TempDir(), "missing")})
+	require.Error(t, err)
+}
+
+func TestParseRevokedTokens(t *testing.T) {
+	ids, err := parseRevokedTokens([]byte("a\n  b # note\n# c\n\r\nd\r\n"))
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{"a": true, "b": true, "d": true}, ids)
 }

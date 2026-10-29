@@ -54,8 +54,11 @@ func (jc *JWTAuthenticationConfig) Validate() error {
 type AuthenticationConfig struct {
 	Enable    bool                     `json:"enable"`
 	JwtConfig *JWTAuthenticationConfig `json:"jwtConfig"`
-	Type      string                   `json:"type"`
-	Config    string                   `json:"config"`
+	// RevokedTokensFile lists the IDs (jti claims) of tokens to reject, one
+	// per line. The server re-reads it within seconds of a change.
+	RevokedTokensFile string `json:"revokedTokensFile"`
+	Type              string `json:"type"`
+	Config            string `json:"config"`
 }
 
 func defaultAuthenticationConfig() *AuthenticationConfig {
@@ -64,6 +67,7 @@ func defaultAuthenticationConfig() *AuthenticationConfig {
 		"Authentication.JwtConfig.Key",
 		"Authentication.JwtConfig.FilePath",
 		"Authentication.JwtConfig.SignatureType",
+		"Authentication.RevokedTokensFile",
 		"Authentication.Type",
 		"Authentication.Config",
 	)
@@ -75,14 +79,20 @@ func defaultAuthenticationConfig() *AuthenticationConfig {
 			FilePath:      "",
 			SignatureType: "",
 		},
-		Type:   "",
-		Config: "",
+		RevokedTokensFile: "",
+		Type:              "",
+		Config:            "",
 	}
 }
 
 func (c *AuthenticationConfig) Validate() error {
 	if !c.Enable {
 		return nil
+	}
+	if c.RevokedTokensFile != "" {
+		if err := validateFileName(c.RevokedTokensFile); err != nil {
+			return NewConfigurationErrorf("bad authentication configuration: revoked tokens file: %s", err.Error())
+		}
 	}
 	if c.JwtConfig != nil {
 		return c.JwtConfig.Validate()

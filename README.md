@@ -14,7 +14,9 @@ kubemq-ce is a fork of [KubeMQ Community](https://github.com/kubemq-io/kubemq-co
 - **No usage reporting.** Upstream sends hostname, a host fingerprint, message counts and environment to `api.kubemq.io` at startup and every 5 minutes. That code is gone.
 - **Runs on Kubernetes.** Upstream refuses to start inside a Kubernetes pod. kubemq-ce starts there like it does anywhere else.
 - **A new dashboard, built from source.** Upstream ships its dashboard only as a compiled bundle. This one lives in [`web/`](web) (Vue 3 + Vite) and covers every channel type. See [Web dashboard](#web-dashboard).
-- **Authentication.** Upstream's community edition has authentication settings but ignores them. Here, gRPC and REST clients can be required to send a JWT, and the dashboard asks for one at sign-in. See [Authentication](#authentication).
+- **Authentication.** Upstream's community edition has authentication settings but ignores them. Here, gRPC and REST clients can be required to send a JWT, and the dashboard asks for one at sign-in. Tokens can be revoked one by one, rules can limit each token to some channels, and an audit log records who did what. See [Authentication](#authentication).
+- **Channel management from the SDKs.** The SDKs' create, list and delete channel calls work. Upstream only answers them in the commercial edition.
+- **CloudEvents and MCP.** Anything that can POST a [CloudEvent](#cloudevents) can publish, and AI agents can use the broker through a built-in [MCP server](#mcp-server-for-ai-agents).
 - **Current dependencies.** Go 1.26 and up-to-date gRPC, Prometheus, echo and NATS libraries.
 - **Fixes.** The dashboard no longer shows another server's metrics when two run on the same host, and links to individual channels work on reload.
 
@@ -84,13 +86,67 @@ Create tokens with the binary, using the same configuration:
 ./kubemq token --subject orders-service --signing-key key.pem  # other types: the matching private key
 ```
 
-Without `--ttl` the token never expires. The server checks the signature, the algorithm and, if present, the expiry. It doesn't check the subject.
+Without `--ttl` the token never expires. The server checks the signature, the algorithm and, if present, the expiry. The subject names who the token is for: [permissions](#permissions) and the [audit log](#audit-log) use it. `kubemq token` also prints the token's ID to stderr; keep it, so you can [revoke](#revoking-tokens) that one token later.
 
 Clients send the token in the `authorization` gRPC metadata key or the `Authorization` HTTP header, with or without `Bearer `. The SDKs do this when given a token: `credentials` in kubemq-js, `WithAuthToken` in kubemq-go. The `kubemq` CLI uses `client.authToken` from `config.yaml`.
 
 With authentication on, gRPC (port 50000) and REST (port 9090) reject other requests with `Unauthenticated` or `401`. Only `Ping` and `GET /ping` are open, for health checks. Use TLS (the `security` section) so tokens aren't sent in clear text.
 
 The dashboard (port 8080) shows a sign-in page that asks for a token. The server keeps it in an HttpOnly cookie until the token expires or you sign out; tokens without `--ttl` last until the browser closes. Its API, `/metrics`, `/config` and `/v1/stats` also accept the token as an `Authorization: Bearer` header, so point Prometheus at `/metrics` with a bearer token. `/health` and `/ready` stay open for probes.
+
+#### Revoking tokens
+
+To cut off a leaked token without changing the key, list its ID in a file:
+
+```yaml
+authentication:
+  revokedTokensFile: /etc/kubemq/revoked-tokens
+```
+
+```text
+# one token ID per line; text after # is ignored
+1Zq3dFh0mPZgk6Y8lK2x7B   # leaked in a CI log, 2026-10-29
+```
+
+The server rereads the file within 5 seconds of a change, so revoking needs no restart, and a mounted Kubernetes ConfigMap works. Tokens made before token IDs existed have none and can only be revoked by changing the key.
+
+#### Permissions
+
+Every valid token can do everything until you add authorization rules. With rules, a request is allowed only when a rule allows it:
+
+```yaml
+authorization:
+  enable: true            # needs authentication
+  policyData: |
+    - subject: orders-service      # the token's subject, or * for any
+      channels: ["orders.*"]       # * matches any characters, dots included
+      types: [queues, events]      # optional: events, events_store, commands, queries, queues
+      actions: [send, receive]
+    - subject: ops
+      channels: ["*"]
+      actions: ["*"]               # send, receive, manage and admin
+  # filePath: /etc/kubemq/rules.yaml   # instead of policyData
+  # autoReload: 10                     # recheck filePath every 10 seconds
+```
+
+The actions are:
+
+- `send`: publish events, send queue messages (including to a message's dead-letter queue) and send commands and queries.
+- `receive`: subscribe, receive, peek, stream and acknowledge queue messages, and answer commands and queries.
+- `manage`: create and delete channels from the SDKs. Channel lists only show the channels you may manage.
+- `admin`: the dashboard and its API, which can do anything. A rule that only grants `admin` needs no `channels`.
+
+Refused requests get `PermissionDenied` on gRPC and `403` on REST. On a stream, such as an SDK's queue upstream, only the refused message gets an error and the stream stays open. A subscription to a wildcard channel such as `orders.>` is checked as written, so it needs a pattern that covers that text, like `orders.*`.
+
+#### Audit log
+
+```yaml
+audit:
+  enable: true
+  filePath: /var/log/kubemq/audit.log   # empty: the server log
+```
+
+The audit log has one JSON line per request with the time, transport, remote address, subject, token ID, client ID, operation, action, channel type, channel and outcome (`allowed`, `denied` or `unauthenticated`). On a stream, each channel is logged once per stream rather than per message. On the dashboard, sign-ins, actions and opened subscriptions are logged, but not page refreshes. It works without authentication too, without subjects.
 
 ## Web dashboard
 
@@ -102,7 +158,7 @@ The dashboard runs on port 8080, next to the broker.
   - **Queues**: peek at or pull waiting messages, stream messages one at a time and acknowledge or reject each, and clear the queue.
   - **Events and events store**: subscribe live, optionally in a consumer group. Events store subscriptions can replay from the first or last message, a sequence number, a point in time, or a number of seconds ago.
   - **Commands and queries**: receive requests and answer them by hand, or reply to them automatically.
-  - **Every type**: watch a channel's traffic without consuming it, and list its clients.
+  - **Every type**: watch a channel's traffic without consuming it, list its clients, and delete the channel. Deleting a queue or events store channel deletes its stored messages too.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/queue-dark.png">
@@ -124,7 +180,27 @@ The `kubemq` binary is also a command-line client:
 
 See the CLI reference for [queues](docs/cli/kubemq_queues.md), [events](docs/cli/kubemq_events.md), [events store](docs/cli/kubemq_events_store.md), [commands](docs/cli/kubemq_commands.md) and [queries](docs/cli/kubemq_queries.md).
 
-kubemq-ce keeps upstream's gRPC and REST API, so the upstream KubeMQ SDKs connect to it: [Go](https://github.com/kubemq-io/kubemq-go), [Java](https://github.com/kubemq-io/kubemq-Java), [Python](https://github.com/kubemq-io/kubemq-Python), [Node](https://github.com/kubemq-io/kubemq-js) and [C#](https://github.com/kubemq-io/kubemq-CSharp). Upstream's [documentation](https://docs.kubemq.io/) explains the messaging patterns.
+kubemq-ce keeps upstream's gRPC and REST API, so the upstream KubeMQ SDKs connect to it: [Go](https://github.com/kubemq-io/kubemq-go), [Java](https://github.com/kubemq-io/kubemq-Java), [Python](https://github.com/kubemq-io/kubemq-Python), [Node](https://github.com/kubemq-io/kubemq-js) and [C#](https://github.com/kubemq-io/kubemq-CSharp). Upstream's [documentation](https://docs.kubemq.io/) explains the messaging patterns. The SDKs' channel management calls (`createChannel`, `listChannels`, `deleteChannel` and their per-type variants) work too.
+
+### CloudEvents
+
+The REST port accepts [CloudEvents](https://cloudevents.io) 1.0 in any HTTP mode: binary (`ce-*` headers), structured (`application/cloudevents+json`) or batched (`application/cloudevents-batch+json`).
+
+```bash
+curl -X POST localhost:9090/cloudevents/queues/orders.new \
+  -H 'ce-specversion: 1.0' -H 'ce-id: 42' -H 'ce-source: /shop' -H 'ce-type: order.created' \
+  -H 'content-type: application/json' -d '{"total": 10}'
+```
+
+The path is `/cloudevents/<events|events_store|queues>/<channel>`. Without a channel, the event's type is used. Each event becomes one message: its ID is the message ID, its source the client ID, its type the metadata and its data the body. Every attribute is also kept as a `ce-<name>` tag. The server answers `202` once every event is sent.
+
+### MCP server for AI agents
+
+The dashboard port serves a [Model Context Protocol](https://modelcontextprotocol.io) server at `/mcp` (streamable HTTP). Its tools are `list_channels`, `get_stats`, `send_message` and `peek_queue`. With authentication on, give the agent a token as a Bearer header. With permissions on, each tool needs what the same request from a client would: `send` to send, `receive` to peek, and `manage` for the channels it lists. The agent doesn't need `admin`.
+
+```bash
+claude mcp add --transport http kubemq http://localhost:8080/mcp --header "Authorization: Bearer $(./kubemq token --subject agent)"
+```
 
 ## Development
 
@@ -137,7 +213,7 @@ task smoke -- localhost:50000                        # kubemq-js SDK smoke test 
 
 The dashboard dev server proxies API calls to a broker on `http://localhost:8080`. Set `BROKER_URL` to use another one. Run `task web` and commit `assets/` after changing the dashboard, since `go build` embeds whatever is there.
 
-`task smoke` runs [`test/smoke-js`](test/smoke-js/smoke.mjs), which exercises every messaging pattern through the official Node SDK (kubemq-js, pinned in its `package.json`). Set `KUBEMQ_TOKEN` when authentication is on. It writes to fresh `smoke.<id>.*` channels on the target server. The SDK's channel-management calls rely on an internal channel only the commercial server answers, so they're reported as expected failures (`XFAIL`).
+`task smoke` runs [`test/smoke-js`](test/smoke-js/smoke.mjs), which exercises every messaging pattern through the official Node SDK (kubemq-js, pinned in its `package.json`). Set `KUBEMQ_TOKEN` when authentication is on. It writes to fresh `smoke.<id>.*` channels on the target server, and needs a token that may send, receive and manage them.
 
 Report bugs in this repository's [issues](https://github.com/tengla/kubemq-ce/issues).
 

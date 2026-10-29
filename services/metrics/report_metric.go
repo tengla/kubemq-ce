@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"github.com/kubemq-io/kubemq-community/pkg/entities"
 	pb "github.com/kubemq-io/protobuf/go"
 )
 
@@ -73,6 +74,11 @@ func ReportRequest(request *pb.Request, response *pb.Response, err error) {
 		}
 		if request.Channel == "" || request.ClientID == "" {
 			exporter.metricsDropped.Inc()
+			return
+		}
+		// Channel management queries are answered by the server; they are not
+		// traffic on a channel of their own.
+		if request.Channel == entities.ClusterInternalRequestsChannel {
 			return
 		}
 		exporter.insertReport(&reportMetric{

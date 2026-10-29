@@ -19,6 +19,7 @@ import (
 
 	"github.com/kubemq-io/kubemq-community/config"
 	"github.com/kubemq-io/kubemq-community/pkg/authentication"
+	"github.com/kubemq-io/kubemq-community/pkg/guard"
 	"github.com/kubemq-io/kubemq-community/pkg/logging"
 	"github.com/kubemq-io/kubemq-community/pkg/monitor"
 	"github.com/labstack/echo/v4"
@@ -36,8 +37,10 @@ type Server struct {
 	broker          *broker.Service
 	metricsExporter *metrics.Exporter
 	apiService      *service
-	auth            *authentication.Authenticator
-	cookieName      string
+	guard           *guard.Guard
+	// auth is the guard's authenticator, nil when authentication is off.
+	auth       *authentication.Authenticator
+	cookieName string
 }
 
 var appConfig *config.Config
@@ -74,13 +77,17 @@ func CreateApiServer(ctx context.Context, broker *broker.Service, appConfigs ...
 		broker:          broker,
 		metricsExporter: metrics.GetExporter(),
 	}
-	auth, err := authentication.New(appConfig.Authentication)
+	g, err := guard.New(appConfig)
 	if err != nil {
 		return nil, err
 	}
-	s.auth = auth
+	s.guard = g
+	if g != nil {
+		s.auth = g.Authenticator()
+	}
 	s.cookieName = sessionCookieName(appConfig.Api.Port)
 	s.apiService = newService(appConfig, broker, s.metricsExporter)
+	s.apiService.guard = g
 	s.context, s.cancelFunc = context.WithCancel(ctx)
 	e := echo.New()
 	e.HideBanner = true
@@ -132,6 +139,9 @@ func CreateApiServer(ctx context.Context, broker *broker.Service, appConfigs ...
 		_ = monitor.MonitorHandlerFunc(s.context, c)
 		return nil
 	})
+	// The MCP endpoint checks tokens itself, per tool, rather than needing
+	// the dashboard's admin session.
+	e.Any("/mcp", echo.WrapHandler(s.mcpHandler()), s.apiService.requireReady)
 	e.GET("/api/auth/session", s.handleSession)
 	e.POST("/api/auth/login", s.handleLogin)
 	e.POST("/api/auth/logout", s.handleLogout)
@@ -140,7 +150,7 @@ func CreateApiServer(ctx context.Context, broker *broker.Service, appConfigs ...
 		return s.apiService.getSnapshot(c)
 	})
 	apiGroup.POST("/request", func(c echo.Context) error {
-		return s.apiService.handleRequests(c)
+		return s.apiService.handleRequests(c, s.auditAction)
 	})
 	apiGroup.GET("/config", func(c echo.Context) error {
 		return c.JSONPretty(http.StatusOK, appConfig.Redacted(), "\t")
@@ -149,16 +159,16 @@ func CreateApiServer(ctx context.Context, broker *broker.Service, appConfigs ...
 		c.Set("appconf", appConfig)
 		_ = monitor.MonitorHandlerFunc(s.context, c)
 		return nil
-	})
+	}, s.audited)
 	apiGroup.GET("/subscribe/pubsub", func(c echo.Context) error {
 		return s.apiService.handlerSubscribeToPubSub(c)
-	})
+	}, s.audited)
 	apiGroup.GET("/subscribe/cqrs", func(c echo.Context) error {
 		return s.apiService.handlerSubscribeToCQRS(c)
-	})
+	}, s.audited)
 	apiGroup.GET("/stream_queue_messages", func(c echo.Context) error {
 		return s.apiService.handlerStreamQueueMessages(c)
-	})
+	}, s.audited)
 	apiGroup.GET("/connection", func(c echo.Context) error {
 		return s.apiService.handlerConnectionStatus(c)
 	})
@@ -195,6 +205,9 @@ func (s *Server) AddHealthFunc(fn func() json.RawMessage) {
 func (s *Server) Close() {
 	_ = s.echoWebServer.Shutdown(context.Background())
 	_ = s.apiService.stop()
+	if s.guard != nil {
+		s.guard.Close()
+	}
 	s.cancelFunc()
 }
 func loggingMiddleware(l *logging.Logger) echo.MiddlewareFunc {

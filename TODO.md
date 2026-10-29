@@ -4,11 +4,11 @@ Features that would bring kubemq-ce closer to KubeMQ v3, ranked by value for eff
 
 ## Quick wins (days each)
 
-- [ ] **Channel management for SDKs** (1–2 days). Answer the queries the SDKs send to `kubemq.cluster.internal.requests`, so kubemq-js `createChannel`, `listChannels` and `deleteChannel` work. Listing can reuse the snapshot data. Delete is new, and the dashboard could use it too. Done when the three `XFAIL`s in `task smoke` pass. First step: read the request and response format kubemq-js expects.
-- [ ] **Per-channel permissions** (3–5 days). Every valid token can do everything today. Use the token's `sub` and the unused `authorization` config section for rules like "orders-service may send to `orders.*`". The upstream design was Casbin; simple rules in config would be easier to run. v3: role-based access control.
-- [ ] **Revocable API keys and an audit log** (1–2 days). Give tokens an ID (`jti`) and keep a revocation list, so a leaked token can be cut off without changing the key. Log who did what at the existing gRPC and REST interceptors. v3: API keys, audit logging.
-- [ ] **CloudEvents endpoint** (1–2 days). A REST endpoint that accepts CloudEvents and maps them onto events and queues, so anything that can POST JSON can publish. v3: CloudEvents, on by default.
-- [ ] **MCP server** (2–3 days). Let AI agents send, peek and list channels and read stats. The actions already exist behind `/api/request`; expose them as tools over the official Go MCP SDK, protected by the same tokens. v3: built-in MCP.
+- [x] **Channel management for SDKs** (1–2 days). Answer the queries the SDKs send to `kubemq.cluster.internal.requests`, so kubemq-js `createChannel`, `listChannels` and `deleteChannel` work. Listing can reuse the snapshot data. Delete is new, and the dashboard could use it too. Done when the three `XFAIL`s in `task smoke` pass. First step: read the request and response format kubemq-js expects.
+- [x] **Per-channel permissions** (3–5 days). Every valid token can do everything today. Use the token's `sub` and the unused `authorization` config section for rules like "orders-service may send to `orders.*`". The upstream design was Casbin; simple rules in config would be easier to run. v3: role-based access control.
+- [x] **Revocable API keys and an audit log** (1–2 days). Give tokens an ID (`jti`) and keep a revocation list, so a leaked token can be cut off without changing the key. Log who did what at the existing gRPC and REST interceptors. v3: API keys, audit logging.
+- [x] **CloudEvents endpoint** (1–2 days). A REST endpoint that accepts CloudEvents and maps them onto events and queues, so anything that can POST JSON can publish. v3: CloudEvents, on by default.
+- [x] **MCP server** (2–3 days). Let AI agents send, peek and list channels and read stats. The actions already exist behind `/api/request`; expose them as tools over the official Go MCP SDK, protected by the same tokens. v3: built-in MCP.
 
 ## Medium (a week or so)
 

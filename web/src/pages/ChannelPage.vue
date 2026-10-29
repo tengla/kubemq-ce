@@ -89,6 +89,25 @@ const sendOpen = ref(false)
 const purgeOpen = ref(false)
 const purging = ref(false)
 
+const deleteOpen = ref(false)
+const deleting = ref(false)
+const isStored = isQueue || typeKey === 'events_store'
+
+async function deleteChannel() {
+  deleting.value = true
+  try {
+    await apiRequest('delete_channel', { type: typeKey, name: props.name })
+    notify(`Deleted ${props.name}`)
+    deleteOpen.value = false
+    pollSnapshot()
+    router.push(type.path)
+  } catch (err) {
+    notify(`Could not delete the channel: ${err.message}`, 'error')
+  } finally {
+    deleting.value = false
+  }
+}
+
 async function purge() {
   purging.value = true
   try {
@@ -113,7 +132,8 @@ async function purge() {
         <span v-if="channel && history.length > 1" class="spark" aria-hidden="true"><Sparkline :values="history" :height="24" /></span>
       </template>
       <template #actions>
-        <button v-if="isQueue" type="button" class="btn btn-danger" @click="purgeOpen = true"><Icon name="trash" :size="16" />Clear queue</button>
+        <button type="button" class="btn btn-danger" @click="deleteOpen = true"><Icon name="trash" :size="16" />Delete channel</button>
+        <button v-if="isQueue" type="button" class="btn btn-danger" @click="purgeOpen = true"><Icon name="eraser" :size="16" />Clear queue</button>
         <button type="button" class="btn btn-primary" @click="sendOpen = true"><Icon name="send" :size="16" />Send message</button>
       </template>
     </PageHeader>
@@ -162,6 +182,13 @@ async function purge() {
       <p class="confirm-text">
         This permanently deletes every message waiting in <strong>{{ name }}</strong
         ><template v-if="channel"> ({{ formatCompact(channel.outgoing?.waiting) }} right now)</template>. It can't be undone.
+      </p>
+    </ConfirmDialog>
+    <ConfirmDialog :open="deleteOpen" :title="`Delete ${name}?`" confirm-label="Delete channel" :busy="deleting" @close="deleteOpen = false" @confirm="deleteChannel">
+      <p class="confirm-text">
+        <template v-if="isStored">This permanently deletes <strong>{{ name }}</strong> and every message stored in it. It can't be undone.</template>
+        <template v-else>This removes <strong>{{ name }}</strong> and its statistics from the dashboard.</template>
+        A client that is still using the channel brings it back with its next message.
       </p>
     </ConfirmDialog>
   </div>

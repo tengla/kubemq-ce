@@ -149,6 +149,20 @@ func (e *Exporter) Snapshot() (*api.Snapshot, error) {
 	return getSnapshot(results), nil
 }
 
+// DeleteChannel removes every series of one channel, so it drops out of the
+// snapshot until it sees traffic again.
+func (e *Exporter) DeleteChannel(pattern, channel string) {
+	lbls := prometheus.Labels{"type": pattern, "channel": channel}
+	e.messagesCollector.metric.DeletePartialMatch(lbls)
+	e.pendingCollector.metric.DeletePartialMatch(lbls)
+	e.volumeCollector.metric.DeletePartialMatch(lbls)
+	e.clientsCollector.metric.DeletePartialMatch(lbls)
+	e.errorsCollector.metric.DeletePartialMatch(lbls)
+	e.lastSeenCollector.metric.DeletePartialMatch(lbls)
+	e.delayedCollector.metric.DeletePartialMatch(lbls)
+	e.expirationCollector.metric.DeletePartialMatch(lbls)
+}
+
 func initExporter(ctx context.Context) *Exporter {
 	e := &Exporter{
 		reportMetricCh:     make(chan *reportMetric, reportMetricSize),

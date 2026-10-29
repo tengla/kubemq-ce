@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/kubemq-io/kubemq-community/config"
-	"github.com/kubemq-io/kubemq-community/pkg/authentication"
+	"github.com/kubemq-io/kubemq-community/pkg/guard"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
@@ -26,6 +26,7 @@ type Server struct {
 	logger        *logging.Logger
 	isTLS         bool
 	acceptTraffic *atomic.Bool
+	guard         *guard.Guard
 }
 
 func (s *Server) Close() {
@@ -34,6 +35,9 @@ func (s *Server) Close() {
 		s.services.Broker.UnRegisterToNotifyState("rest")
 	}
 	_ = s.echoWebServer.Shutdown(context.Background())
+	if s.guard != nil {
+		s.guard.Close()
+	}
 }
 
 func getCORSConfig(appConfig *config.Config) middleware.CORSConfig {
@@ -65,10 +69,11 @@ func NewServer(svc *services.SystemServices, appConfigs ...*config.Config) (*Ser
 		acceptTraffic: atomic.NewBool(false),
 	}
 	kubeversion = fmt.Sprintf("KubeMQ %s", appConfig.GetVersion())
-	auth, err := authentication.New(appConfig.Authentication)
+	g, err := guard.New(appConfig)
 	if err != nil {
 		return nil, err
 	}
+	s.guard = g
 
 	e := echo.New()
 	s.echoWebServer = e
@@ -79,8 +84,8 @@ func NewServer(svc *services.SystemServices, appConfigs ...*config.Config) (*Ser
 	e.HTTPErrorHandler = s.customHTTPErrorHandler
 	e.Use(middleware.CORSWithConfig(getCORSConfig(appConfig)))
 	e.Use(Logging(s.logger))
-	if auth != nil {
-		e.Use(Authentication(auth))
+	if g != nil {
+		e.Use(Authentication(g))
 	}
 
 	if svc.Broker != nil {
@@ -157,6 +162,9 @@ func NewServer(svc *services.SystemServices, appConfigs ...*config.Config) (*Ser
 	e.POST("/send/response", func(c echo.Context) error {
 		return s.handlerSendResponse(c)
 	})
+	// routes to publish CloudEvents, see cloudevents.go
+	e.POST("/cloudevents/:pattern", s.handlerCloudEvents)
+	e.POST("/cloudevents/:pattern/*", s.handlerCloudEvents)
 
 	e.Server.ReadTimeout = time.Duration(appConfig.Rest.ReadTimeout) * time.Second
 	e.Server.WriteTimeout = time.Duration(appConfig.Rest.WriteTimeout) * time.Second

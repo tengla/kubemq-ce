@@ -98,6 +98,42 @@ func (s *Service) GetEventsStores(ctx context.Context) (*Queues, error) {
 	return ch.toQueues("_EVENTS_STORE_."), nil
 }
 
+// DeleteStoreChannel deletes a NATS Streaming channel with its stored
+// messages. A channel that doesn't exist is not an error. The streaming server
+// deletes asynchronously, and not while the channel has subscribers, so this
+// waits for the channel to be gone.
+func (s *Service) DeleteStoreChannel(ctx context.Context, name string) error {
+	if s.Snats == nil {
+		return fmt.Errorf("broker is not ready")
+	}
+	if !s.Snats.HasChannel(name) {
+		return nil
+	}
+	// The streaming server deletes channels through its inactivity tracking,
+	// which only exists when a max inactivity is set.
+	if s.SnatsOptions.MaxInactivity <= 0 {
+		return fmt.Errorf("deleting stored channels needs store.maxPurgeInactive above 0")
+	}
+	if err := s.Snats.DeleteChannel(name); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.After(3 * time.Second)
+	for {
+		select {
+		case <-ticker.C:
+			if !s.Snats.HasChannel(name) {
+				return nil
+			}
+		case <-timeout:
+			return fmt.Errorf("channel has subscribers, it will be deleted when they leave")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
 func (s *Service) IsHealthy() bool {
 	return s.isHealthy.Load()
 }

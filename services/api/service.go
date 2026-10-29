@@ -8,6 +8,7 @@ import (
 	"github.com/kubemq-io/kubemq-community/config"
 	"github.com/kubemq-io/kubemq-community/pkg/api"
 	actions_pkg "github.com/kubemq-io/kubemq-community/pkg/api/actions"
+	"github.com/kubemq-io/kubemq-community/pkg/guard"
 	"github.com/kubemq-io/kubemq-community/pkg/logging"
 	"github.com/kubemq-io/kubemq-community/services/api/actions"
 	"github.com/kubemq-io/kubemq-community/services/array"
@@ -46,6 +47,10 @@ type service struct {
 	logger                   *logging.Logger
 	lastLoadedEntitiesGroups map[string]*api.EntitiesGroup
 	actionClient             *actions.InternalClient
+	array                    *array.Array
+	// guard, nil when authentication, authorization and audit are off,
+	// decides which channels a list-channels query shows.
+	guard *guard.Guard
 	// ready is set once init has run. The API server starts listening before
 	// the broker is up, so requests can arrive before there is state to serve.
 	ready atomic.Bool
@@ -74,11 +79,13 @@ func (s *service) init(ctx context.Context, logger *logging.Logger, array *array
 		s.lastLoadedEntitiesGroups["channels"] = api.NewEntitiesGroup()
 		s.lastLoadedEntitiesGroups["clients"] = api.NewEntitiesGroup()
 	}
+	s.array = array
 	s.actionClient = actions.NewInternalClient()
 	err = s.actionClient.Init(ctx, array, s.broker)
 	if err != nil {
 		return fmt.Errorf("error initializing actions client: %s", err.Error())
 	}
+	array.SetInternalRequestHandler(s.handleInternalRequest)
 	s.ready.Store(true)
 	go s.run(ctx)
 	return nil
@@ -182,12 +189,13 @@ func (s *service) getSnapshot(c echo.Context) error {
 	return res.SetResponseBody(snapshotDTO).Send()
 }
 
-func (s *service) handleRequests(c echo.Context) error {
+func (s *service) handleRequests(c echo.Context, audit func(c echo.Context, channel string)) error {
 	res := NewResponse(c)
 	req := actions_pkg.NewRequest()
 	if err := c.Bind(req); err != nil {
 		return res.SetError(err).Send()
 	}
+	audit(c, requestChannel(req))
 	switch req.Type {
 	case "create_channel":
 		actionRequest := actions_pkg.NewCreateChannelRequest()
@@ -195,6 +203,15 @@ func (s *service) handleRequests(c echo.Context) error {
 			return res.SetError(err).Send()
 		}
 		if err := s.actionClient.CreateChannel(c.Request().Context(), actionRequest); err != nil {
+			return res.SetError(err).Send()
+		}
+		return res.Send()
+	case "delete_channel":
+		actionRequest := actions_pkg.NewDeleteChannelRequest()
+		if err := actionRequest.ParseRequest(req); err != nil {
+			return res.SetError(err).Send()
+		}
+		if err := s.deleteChannel(c.Request().Context(), actionRequest.Type, actionRequest.Name); err != nil {
 			return res.SetError(err).Send()
 		}
 		return res.Send()
@@ -263,6 +280,18 @@ func (s *service) handleRequests(c echo.Context) error {
 		return res.SetError(fmt.Errorf("unknown action type: %s", req.Type)).Send()
 	}
 }
+
+// requestChannel finds the channel a dashboard action acts on, for the audit
+// log. Channel actions name it "name", message actions "channel".
+func requestChannel(req *actions_pkg.Request) string {
+	for _, key := range []string{"channel", "name"} {
+		if v, ok := req.Data[key].(string); ok {
+			return v
+		}
+	}
+	return ""
+}
+
 func (s *service) handlerConnectionStatus(c echo.Context) error {
 	res := NewResponse(c)
 	ctx, cancel := context.WithCancel(c.Request().Context())

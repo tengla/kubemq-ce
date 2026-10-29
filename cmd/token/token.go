@@ -69,10 +69,12 @@ func (o *Options) Run(ctx context.Context) error {
 		}
 		privateKey = data
 	}
-	token, err := authentication.Sign(o.cfg.Authentication.JwtConfig, privateKey, o.subject, o.ttl)
+	token, id, err := authentication.Sign(o.cfg.Authentication.JwtConfig, privateKey, o.subject, o.ttl)
 	if err != nil {
 		return err
 	}
+	// The token alone goes to stdout, so it can be captured by a script.
+	fmt.Fprintf(os.Stderr, "token id: %s (add it to authentication.revokedTokensFile to revoke the token)\n", id)
 	fmt.Println(token)
 	return nil
 }

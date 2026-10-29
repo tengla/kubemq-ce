@@ -63,6 +63,7 @@ type Config struct {
 	Rest            *RestConfig           `json:"rest"`
 	Authorization   *AuthorizationConfig  `json:"authorization"`
 	Authentication  *AuthenticationConfig `json:"authentication"`
+	Audit           *AuditConfig          `json:"audit"`
 	Security        *SecurityConfig       `json:"security"`
 	Routing         *RoutingConfig        `json:"routing"`
 	startServerTime int64
@@ -143,6 +144,7 @@ func GetDefaultConfig() *Config {
 		Rest:            defaultRestConfig(),
 		Authorization:   defaultAuthorizationConfig(),
 		Authentication:  defaultAuthenticationConfig(),
+		Audit:           defaultAuditConfig(),
 		Security:        defaultSecurityConfig(),
 		Routing:         defaultRoutingConfig(),
 		startServerTime: 0,
@@ -337,6 +339,12 @@ func (c *Config) Validate() error {
 	}
 	if err := c.Authentication.Validate(); err != nil {
 		return err
+	}
+	if err := c.Audit.Validate(); err != nil {
+		return err
+	}
+	if c.Authorization.Enable && !c.Authentication.Enable {
+		return NewConfigurationError("authorization needs authentication enabled, which provides the token subjects")
 	}
 	if err := c.Store.Validate(); err != nil {
 		return err

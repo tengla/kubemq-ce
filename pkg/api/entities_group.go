@@ -55,6 +55,21 @@ func (e *EntitiesGroup) AddEntity(family string, entity *Entity) {
 		e.LastSeen = entity.LastSeen
 	}
 }
+
+// RemoveEntity removes one entity, and its family once that is empty.
+func (e *EntitiesGroup) RemoveEntity(family, name string) {
+	enFamily, ok := e.Families[family]
+	if !ok {
+		return
+	}
+	delete(enFamily.Entities, name)
+	if len(enFamily.Entities) == 0 {
+		delete(e.Families, family)
+	}
+}
+func (e *EntitiesGroup) RemoveFamily(family string) {
+	delete(e.Families, family)
+}
 func (e *EntitiesGroup) List() []*Entity {
 	var list []*Entity
 	for _, enFamily := range e.Families {

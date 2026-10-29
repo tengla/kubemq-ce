@@ -48,3 +48,8 @@ var SubKindNames = map[SubKindType]string{
 	SubKindTypeQueueSender:        "Queue Senders",
 	SubKindTypeQueueReceiver:      "Queue Receivers",
 }
+
+// ClusterInternalRequestsChannel is the channel the SDKs send their channel
+// management queries to (create-channel, list-channels, delete-channel). The
+// server answers these itself instead of routing them to subscribers.
+const ClusterInternalRequestsChannel = "kubemq.cluster.internal.requests"

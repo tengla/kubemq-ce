@@ -49,6 +49,29 @@ type Array struct {
 	queueDownstreamCounter     *atomic.Uint64
 	queueUpstreamClientsPool   *client.QueuePool
 	queueUpstreamCounter       *atomic.Uint64
+	internalRequestHandler     atomic.Value
+}
+
+// InternalRequestHandler answers a query sent to
+// entities.ClusterInternalRequestsChannel.
+type InternalRequestHandler func(ctx context.Context, req *pb.Request) *pb.Response
+
+// SetInternalRequestHandler sets who answers the SDKs' channel management
+// queries. Until it is set they get a "not ready" error, which the SDKs retry.
+func (a *Array) SetInternalRequestHandler(h InternalRequestHandler) {
+	a.internalRequestHandler.Store(h)
+}
+
+func (a *Array) handleInternalRequest(ctx context.Context, req *pb.Request) *pb.Response {
+	h, ok := a.internalRequestHandler.Load().(InternalRequestHandler)
+	if !ok || h == nil {
+		return &pb.Response{
+			RequestID: req.RequestID,
+			Timestamp: time.Now().UnixNano(),
+			Error:     "cluster snapshot not ready",
+		}
+	}
+	return h(ctx, req)
 }
 
 func Start(ctx context.Context, appConfig *config.Config) (*Array, error) {
@@ -398,6 +421,9 @@ func (a *Array) sendEventsStore(ctx context.Context, msg *pb.Event) (*pb.Result,
 func (a *Array) SendQuery(ctx context.Context, req *pb.Request) (*pb.Response, error) {
 	if a.isShutdown.Load() {
 		return nil, entities.ErrShutdownMode
+	}
+	if req.Channel == entities.ClusterInternalRequestsChannel {
+		return a.handleInternalRequest(ctx, req), nil
 	}
 	res, err := a.QuerySender.SendQuery(ctx, req)
 	return res, err

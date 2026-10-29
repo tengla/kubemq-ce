@@ -5,9 +5,8 @@
 // Set KUBEMQ_TOKEN when the server has authentication enabled. Each run uses
 // fresh channels named smoke.<run id>.* on the target server.
 //
-// The SDK's channel-management calls send queries to an internal channel that
-// only the commercial KubeMQ server answers, so they are expected to time out
-// here. They are reported as XFAIL and don't fail the run; if one starts
+// A check can be marked expectFail for SDK features the server doesn't
+// support. Those are reported as XFAIL and don't fail the run; if one starts
 // passing it shows up as XPASS.
 import {
   KubeMQClient,
@@ -32,7 +31,7 @@ process.on('uncaughtException', (err) => {
   process.exit(1)
 })
 
-function withTimeout(promise, ms, what) {
+async function withTimeout(promise, ms, what) {
   let timer
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms waiting for ${what}`)), ms)
@@ -178,23 +177,28 @@ await check('queues: purge', async () => {
   return 'queue empty'
 })
 
-const managed = { expectFail: true }
+// The SDK ignores the server's answer to create and delete, so check the
+// effect with a list.
+const listedQueues = async () => (await client.listQueuesChannels(`smoke.${run}`)).map((c) => c.name)
+
 await check('channels: create queues channel', async () => {
   await client.createQueuesChannel(ch('created'))
+  if (!(await listedQueues()).includes(ch('created'))) throw new Error('not listed after create')
   return 'ok'
-}, managed)
+})
 
 await check('channels: list queues channels', async () => {
   const list = await client.listQueuesChannels(`smoke.${run}`)
   return `${list.length} channels: ${list.map((c) => c.name).join(', ')}`
-}, managed)
+})
 
 await check('channels: delete queues channel', async () => {
   await client.deleteQueuesChannel(ch('created'))
+  if ((await listedQueues()).includes(ch('created'))) throw new Error('still listed after delete')
   return 'ok'
-}, managed)
+})
 
-await client.close().catch(() => {})
+await client.close().catch(() => { })
 
 const label = (r) => (r.ok ? (r.expectFail ? 'XPASS' : 'PASS ') : r.expectFail ? 'XFAIL' : 'FAIL ')
 for (const r of results) console.log(`${label(r)}  ${r.name}  ->  ${r.detail}`)

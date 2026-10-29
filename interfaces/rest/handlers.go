@@ -3,6 +3,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"github.com/kubemq-io/kubemq-community/pkg/authorization"
 	"github.com/kubemq-io/kubemq-community/pkg/entities"
 	"github.com/kubemq-io/kubemq-community/services/metrics"
 	"net/http"
@@ -48,6 +49,9 @@ func (s *Server) handlerSendMessage(c echo.Context) error {
 	if err != nil {
 		return res.SetError(err).SetHttpCode(400).Send()
 	}
+	if err := s.authorize(c, event, nil); err != nil {
+		return denied(res, err)
+	}
 	var result *pb.Result
 
 	if event.Store {
@@ -69,6 +73,9 @@ func (s *Server) handlerSendRequest(c echo.Context) error {
 	err := c.Bind(request)
 	if err != nil {
 		return res.SetError(err).SetHttpCode(400).Send()
+	}
+	if err := s.authorize(c, request, nil); err != nil {
+		return denied(res, err)
 	}
 	var response *pb.Response
 
@@ -101,6 +108,9 @@ func (s *Server) handlerSendResponse(c echo.Context) error {
 	if err != nil {
 		return httpResponse.SetError(err).SetHttpCode(400).Send()
 	}
+	if err := s.authorize(c, response, nil); err != nil {
+		return denied(httpResponse, err)
+	}
 
 	err = s.services.Array.SendResponse(ctx, response)
 	metrics.ReportResponse(response, err)
@@ -116,6 +126,9 @@ func (s *Server) handlerSubscribeToEvents(c echo.Context, appConfig *config.Conf
 	var pattern string
 	res := NewResponse(c)
 	subRequest := paramsToSubRequest(c)
+	if err := s.authorize(c, subRequest, nil); err != nil {
+		return denied(res, err)
+	}
 	eventReceiveCh := make(chan *pb.EventReceive, appConfig.Rest.SubBuffSize)
 	errCh := make(chan error, 10)
 	var err error
@@ -209,6 +222,9 @@ func (s *Server) handlerSubscribeToRequests(c echo.Context, appConfig *config.Co
 	defer cancel()
 	res := NewResponse(c)
 	subRequest := paramsToSubRequest(c)
+	if err := s.authorize(c, subRequest, nil); err != nil {
+		return denied(res, err)
+	}
 	requestsCh := make(chan *pb.Request, appConfig.Rest.SubBuffSize)
 	errCh := make(chan error, 10)
 	var err error
@@ -311,7 +327,7 @@ func (s *Server) handlerSendMessageStream(c echo.Context) error {
 	defer func() {
 		_ = conn.Close()
 	}()
-
+	seen := map[authorization.Check]bool{}
 	for {
 		select {
 		case <-ctx.Done():
@@ -331,14 +347,16 @@ func (s *Server) handlerSendMessageStream(c echo.Context) error {
 				continue
 			}
 			var result *pb.Result
-			if event.Store {
-				result, err = s.services.Array.SendEventsStore(ctx, event)
-			} else {
-				result, err = s.services.Array.SendEvents(ctx, event)
+			if err = s.authorize(c, event, seen); err == nil {
+				if event.Store {
+					result, err = s.services.Array.SendEventsStore(ctx, event)
+				} else {
+					result, err = s.services.Array.SendEvents(ctx, event)
+				}
 			}
 			if err != nil {
 				result = &pb.Result{
-					EventID: "",
+					EventID: event.EventID,
 					Sent:    false,
 					Error:   err.Error(),
 				}
@@ -405,6 +423,9 @@ func (s *Server) handlerSendQueueMessage(c echo.Context) error {
 
 		return res.SetError(err).SetHttpCode(400).Send()
 	}
+	if err := s.authorize(c, msg, nil); err != nil {
+		return denied(res, err)
+	}
 	var result *pb.SendQueueMessageResult
 	result, err = s.services.Array.SendQueueMessage(ctx, msg)
 	if err != nil {
@@ -423,6 +444,9 @@ func (s *Server) handlerSendBatchQueueMessages(c echo.Context) error {
 	if err != nil {
 		return res.SetError(err).SetHttpCode(400).Send()
 	}
+	if err := s.authorize(c, batchRequest, nil); err != nil {
+		return denied(res, err)
+	}
 	var batchResponse *pb.QueueMessagesBatchResponse
 	batchResponse, err = s.services.Array.SendQueueMessagesBatch(ctx, batchRequest)
 	if err != nil {
@@ -440,6 +464,9 @@ func (s *Server) handlerReceiveQueueMessages(c echo.Context) error {
 	err := c.Bind(request)
 	if err != nil {
 		return res.SetError(err).SetHttpCode(400).Send()
+	}
+	if err := s.authorize(c, request, nil); err != nil {
+		return denied(res, err)
 	}
 	var response *pb.ReceiveQueueMessagesResponse
 	response, err = s.services.Array.ReceiveQueueMessages(ctx, request)
@@ -478,6 +505,7 @@ func (s *Server) handlerStreamQueueMessages(c echo.Context) error {
 	}()
 
 	go func() {
+		seen := map[authorization.Check]bool{}
 		for {
 			msgType, data, err := conn.ReadMessage()
 			if err != nil {
@@ -489,6 +517,15 @@ func (s *Server) handlerStreamQueueMessages(c echo.Context) error {
 				if err != nil {
 					s.logger.Error(entities.ErrMarshalError)
 					continue
+				}
+				if err := s.authorize(c, messagesRequest, seen); err != nil {
+					// Answer through the writer loop, which owns the connection.
+					select {
+					case messagesResponsesCh <- &pb.StreamQueueMessagesResponse{RequestID: messagesRequest.RequestID, StreamRequestTypeData: messagesRequest.StreamRequestTypeData, IsError: true, Error: err.Error()}:
+						continue
+					case <-ctx.Done():
+						return
+					}
 				}
 				//if messagesRequest != nil && messagesRequest.StreamRequestTypeData == pb.StreamRequestType_ReceiveMessage && channelForMetrics == "" {
 				//	metrics.ReportClient("queue", "receive", messagesRequest.Channel, 1)
@@ -547,6 +584,9 @@ func (s *Server) handlerQueueInfo(c echo.Context) error {
 	if err != nil {
 		return res.SetError(err).SetHttpCode(400).Send()
 	}
+	if err := s.authorize(c, request, nil); err != nil {
+		return denied(res, err)
+	}
 
 	results, err := s.services.Broker.GetQueues(ctx)
 	if err != nil {
@@ -601,6 +641,9 @@ func (s *Server) handlerAckAllQueueMessages(c echo.Context) error {
 	if err != nil {
 
 		return res.SetError(err).SetHttpCode(400).Send()
+	}
+	if err := s.authorize(c, req, nil); err != nil {
+		return denied(res, err)
 	}
 
 	result, err := s.services.Array.AckAllQueueMessages(ctx, req)
