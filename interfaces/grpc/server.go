@@ -7,6 +7,7 @@ import (
 	"github.com/kubemq-io/kubemq-community/config"
 	"github.com/kubemq-io/kubemq-community/interfaces/grpc/middleware/recovery"
 	"github.com/kubemq-io/kubemq-community/pkg/guard"
+	"github.com/kubemq-io/kubemq-community/pkg/tracing"
 	"github.com/kubemq-io/kubemq-community/services"
 	"go.uber.org/atomic"
 	"net"
@@ -102,6 +103,9 @@ func configureServer(svc *services.SystemServices, logger *logging.Logger, opts 
 	if opts.guard != nil {
 		streamInterceptors = append(streamInterceptors, middleware.StreamAuthServerInterceptor(opts.guard))
 		unaryInterceptors = append(unaryInterceptors, middleware.UnaryAuthServerInterceptor(opts.guard))
+	}
+	if tracing.Enabled() {
+		connOptions = append(connOptions, tracing.GRPCServerOption())
 	}
 	connOptions = append(connOptions, grpc.StreamInterceptor(middleware.ChainStreamServer(streamInterceptors...)))
 	connOptions = append(connOptions, grpc.UnaryInterceptor(middleware.ChainUnaryServer(unaryInterceptors...)))

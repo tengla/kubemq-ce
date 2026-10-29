@@ -5,6 +5,7 @@ import (
 	"github.com/kubemq-io/kubemq-community/pkg/client"
 	"github.com/kubemq-io/kubemq-community/pkg/cmap"
 	"github.com/kubemq-io/kubemq-community/pkg/entities"
+	"github.com/kubemq-io/kubemq-community/pkg/tracing"
 	"github.com/kubemq-io/kubemq-community/pkg/uuid"
 	pb "github.com/kubemq-io/protobuf/go"
 )
@@ -156,6 +157,9 @@ func (a *arrayQueuesDownstreamHandler) createNewTransaction(ctx context.Context,
 	}
 	t.SetResponse(resp)
 	a.transactions.Set(t.transactionId, t)
+	for _, msg := range resp.QueuesDownstreamResponse.Messages {
+		msg.Tags = tracing.Deliver(msg.Tags, queueTraceMessage(msg))
+	}
 	a.responsesCh <- resp.QueuesDownstreamResponse
 }
 func (a *arrayQueuesDownstreamHandler) ackAllTransaction(t *queueDownstreamTransaction, requestId string) {

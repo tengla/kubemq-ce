@@ -15,6 +15,7 @@ import (
 
 	"context"
 
+	"github.com/kubemq-io/kubemq-community/pkg/tracing"
 	"go.uber.org/atomic"
 )
 
@@ -252,6 +253,7 @@ func (c *Client) SubscribeToEvents(ctx context.Context, subReq *pb.Subscribe, ev
 			c.logger.Errorf("error on unmarshal message", "error", err.Error())
 			return
 		}
+		eventReceive.Tags = tracing.Deliver(eventReceive.Tags, eventDeliveryTrace("events", eventReceive, subReq))
 
 		select {
 		case <-ctx.Done():
@@ -292,6 +294,7 @@ func (c *Client) SubscribeToEventsStore(ctx context.Context, subReq *pb.Subscrib
 		}
 		eventReceive.Timestamp = msg.Timestamp
 		eventReceive.Sequence = msg.Sequence
+		eventReceive.Tags = tracing.Deliver(eventReceive.Tags, eventDeliveryTrace("events_store", eventReceive, subReq))
 		select {
 		case <-ctx.Done():
 			return
@@ -410,6 +413,7 @@ func (c *Client) SubscribeToCommands(ctx context.Context, subReq *pb.Subscribe, 
 		err := req.Unmarshal(r.Data)
 		if err == nil {
 			req.ReplyChannel = r.Reply
+			req.Tags = tracing.Deliver(req.Tags, requestDeliveryTrace("commands", req, subReq))
 			select {
 			case <-ctx.Done():
 				return
@@ -441,6 +445,7 @@ func (c *Client) SubscribeToQueries(ctx context.Context, subReq *pb.Subscribe, r
 		err := req.Unmarshal(r.Data)
 		if err == nil {
 			req.ReplyChannel = r.Reply
+			req.Tags = tracing.Deliver(req.Tags, requestDeliveryTrace("queries", req, subReq))
 			select {
 			case <-ctx.Done():
 				return

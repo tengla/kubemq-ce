@@ -92,3 +92,10 @@ store:
   maxRetention: 1440
   maxSubscribers: 0
   storePath: ./store
+tracing:
+  enable: false
+  endpoint: ""
+  insecure: false
+  protocol: grpc
+  sampleRatio: 1
+  serviceName: kubemq

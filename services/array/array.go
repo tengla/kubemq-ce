@@ -19,6 +19,7 @@ import (
 	"github.com/kubemq-io/kubemq-community/pkg/client"
 	"github.com/kubemq-io/kubemq-community/pkg/logging"
 	"github.com/kubemq-io/kubemq-community/pkg/monitor"
+	"github.com/kubemq-io/kubemq-community/pkg/tracing"
 	pb "github.com/kubemq-io/protobuf/go"
 )
 
@@ -404,7 +405,10 @@ func (a *Array) SendEvents(ctx context.Context, msg *pb.Event) (*pb.Result, erro
 }
 
 func (a *Array) sendEvents(ctx context.Context, msg *pb.Event) (*pb.Result, error) {
+	var end func(error)
+	msg.Tags, end = tracing.Send(ctx, msg.Tags, eventTraceMessage(msg))
 	result, err := a.eventSender.SendEvents(ctx, msg)
+	end(eventError(result, err))
 	metrics.ReportEvent(msg, result)
 	return result, err
 }
@@ -416,7 +420,10 @@ func (a *Array) SendEventsStore(ctx context.Context, msg *pb.Event) (*pb.Result,
 	return a.sendEventsStore(ctx, msg)
 }
 func (a *Array) sendEventsStore(ctx context.Context, msg *pb.Event) (*pb.Result, error) {
+	var end func(error)
+	msg.Tags, end = tracing.Send(ctx, msg.Tags, eventTraceMessage(msg))
 	result, err := a.eventsStoreSender.SendEventsStore(ctx, msg)
+	end(eventError(result, err))
 	metrics.ReportEvent(msg, result)
 	return result, err
 }
@@ -427,12 +434,16 @@ func (a *Array) SendQuery(ctx context.Context, req *pb.Request) (*pb.Response, e
 	if req.Channel == entities.ClusterInternalRequestsChannel {
 		return a.handleInternalRequest(ctx, req), nil
 	}
+	var end func(error)
+	req.Tags, end = tracing.Send(ctx, req.Tags, requestTraceMessage("queries", req))
 	if req.CacheKey != "" {
 		if res, ok := a.queryCache.get(req); ok {
+			end(nil)
 			return res, nil
 		}
 	}
 	res, err := a.QuerySender.SendQuery(ctx, req)
+	end(err)
 	if err == nil && req.CacheKey != "" {
 		a.queryCache.put(req, res)
 	}
@@ -443,7 +454,10 @@ func (a *Array) SendCommand(ctx context.Context, req *pb.Request) (*pb.Response,
 	if a.isShutdown.Load() {
 		return nil, entities.ErrShutdownMode
 	}
+	var end func(error)
+	req.Tags, end = tracing.Send(ctx, req.Tags, requestTraceMessage("commands", req))
 	res, err := a.CommandSender.SendCommand(ctx, req)
+	end(err)
 	return res, err
 }
 func (a *Array) SendResponse(ctx context.Context, res *pb.Response) error {
@@ -469,7 +483,10 @@ func (a *Array) sendQueueMessage(ctx context.Context, msg *pb.QueueMessage) (*pb
 		return nil, err
 	}
 	defer a.queueClientsPool.ReleaseClient(msg.Channel + "-sender")
+	var end func(error)
+	msg.Tags, end = tracing.Send(ctx, msg.Tags, queueTraceMessage(msg))
 	res := ChainQueueSenders(nc, QueueSenderLogging(a.logger)).SendQueueMessage(ctx, msg)
+	end(queueResultError(res))
 	metrics.ReportSendQueueMessage(msg, res)
 	return res, nil
 }
@@ -510,7 +527,21 @@ func (a *Array) sendQueueMessagesBatch(ctx context.Context, req *pb.QueueMessage
 		return nil, err
 	}
 	defer a.ReleaseQueueUpstreamClientFromPool(id)
+	ends := make([]func(error), len(req.Messages))
+	for i, msg := range req.Messages {
+		msg.Tags, ends[i] = tracing.Send(ctx, msg.Tags, queueTraceMessage(msg))
+	}
 	res, err := ChainQueueBatchSenders(nc, QueueBatchSenderLogging(a.logger)).SendQueueMessagesBatch(ctx, req)
+	for i, end := range ends {
+		switch {
+		case err != nil:
+			end(err)
+		case res != nil && i < len(res.Results):
+			end(queueResultError(res.Results[i]))
+		default:
+			end(nil)
+		}
+	}
 	metrics.ReportSendQueueMessageBatch(req, res)
 
 	return res, err
@@ -528,6 +559,12 @@ func (a *Array) ReceiveQueueMessages(ctx context.Context, req *pb.ReceiveQueueMe
 	defer a.queueClientsPool.ReleaseClient(req.Channel + "-receiver")
 
 	res, err := ChainQueueReceivers(nc, QueueReceiverLogging(a.logger)).ReceiveQueueMessages(ctx, req)
+	// A peek leaves the messages in the queue, so it delivers nothing.
+	if err == nil && res != nil && !req.IsPeak {
+		for _, msg := range res.Messages {
+			msg.Tags = tracing.Deliver(msg.Tags, queueTraceMessage(msg))
+		}
+	}
 	return res, err
 }
 

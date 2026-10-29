@@ -12,7 +12,7 @@ Features that would bring kubemq-ce closer to KubeMQ v3, ranked by value for eff
 
 ## Medium (a week or so)
 
-- [ ] **OpenTelemetry tracing**. Add interceptors to gRPC and REST, and carry the trace context in message tags so traces continue from producer through broker to consumer. Metrics are already in Prometheus. v3: OTLP.
+- [x] **OpenTelemetry tracing**. Add interceptors to gRPC and REST, and carry the trace context in message tags so traces continue from producer through broker to consumer. Metrics are already in Prometheus. v3: OTLP.
 - [ ] **KEDA autoscaling**. Autoscale consumers on queue depth. Prometheus already exposes the numbers, so start with docs and an example `ScaledObject`; a proper external scaler can come after. v3: KEDA integration.
 - [ ] **MQTT gateway**. Probably a separate MQTT front end (for example mochi-mqtt) mapped onto events and events store. NATS's own MQTT support needs JetStream, which this broker doesn't use; check what the embedded NATS fork in `kubemq-io/broker` supports first. v3: native MQTT.
 
@@ -28,7 +28,6 @@ Features that would bring kubemq-ce closer to KubeMQ v3, ranked by value for eff
 
 ## Suggested order
 
-1. Channel management: small, makes the SDKs fully work, and adds delete to the dashboard.
-2. Per-channel permissions, revocable keys and the audit log: builds on the authentication already in place and makes it usable with several teams.
-3. MCP or OpenTelemetry, depending on whether AI agents or production observability matters more.
-4. JetStream, as a separate project, if HA is wanted.
+1. KEDA docs and an example `ScaledObject`: small, and useful to anyone running consumers on Kubernetes.
+2. JetStream, as a separate project, if HA is wanted.
+3. MQTT, if devices need to publish directly.

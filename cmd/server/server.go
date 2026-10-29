@@ -5,6 +5,7 @@ import (
 	"github.com/kubemq-io/kubemq-community/config"
 	"github.com/kubemq-io/kubemq-community/interfaces"
 	"github.com/kubemq-io/kubemq-community/pkg/logging"
+	"github.com/kubemq-io/kubemq-community/pkg/tracing"
 	"github.com/kubemq-io/kubemq-community/pkg/utils"
 	"github.com/kubemq-io/kubemq-community/services"
 	"github.com/spf13/cobra"
@@ -12,6 +13,7 @@ import (
 	"os/signal"
 	"runtime"
 	"syscall"
+	"time"
 )
 
 type Options struct {
@@ -54,6 +56,10 @@ func (o *Options) Run(ctx context.Context) error {
 	signal.Notify(gracefulShutdown, syscall.SIGQUIT)
 	logger := logging.GetLogFactory().NewLogger("server")
 	logger.Infof("starting kubemq community edition version: %s, cores: %d", o.cfg.GetVersion(), runtime.NumCPU())
+	stopTracing, err := tracing.Init(ctx, o.cfg.Tracing, o.cfg.Host, o.cfg.GetVersion())
+	if err != nil {
+		return err
+	}
 	srvs, err := services.Start(ctx, o.cfg)
 	if err != nil {
 		return err
@@ -70,6 +76,12 @@ func (o *Options) Run(ctx context.Context) error {
 	}
 	srvs.Close()
 	<-srvs.Stopped
+	// Flush the spans still waiting to be exported.
+	flushCtx, cancelFlush := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := stopTracing(flushCtx); err != nil {
+		logger.Warnw("error flushing traces", "error", err.Error())
+	}
+	cancelFlush()
 	logger.Warnw("kubemq server shutdown completed")
 	logging.Close()
 	return nil

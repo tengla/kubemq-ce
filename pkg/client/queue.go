@@ -20,6 +20,7 @@ import (
 	nats "github.com/kubemq-io/broker/client/nats"
 	stan "github.com/kubemq-io/broker/client/stan"
 	"github.com/kubemq-io/kubemq-community/pkg/logging"
+	"github.com/kubemq-io/kubemq-community/pkg/tracing"
 )
 
 const (
@@ -1448,6 +1449,9 @@ func createResponseWithError(sqr *pb.StreamQueueMessagesRequest, err error) *pb.
 	}
 }
 func createResponseWithMessage(sqr *pb.StreamQueueMessagesRequest, msg *pb.QueueMessage) *pb.StreamQueueMessagesResponse {
+	if msg != nil && sqr.StreamRequestTypeData == pb.StreamRequestType_ReceiveMessage {
+		msg.Tags = tracing.Deliver(msg.Tags, tracing.Message{Pattern: "queues", Channel: msg.Channel, ID: msg.MessageID, ClientID: sqr.ClientID, BodySize: len(msg.Body)})
+	}
 	return &pb.StreamQueueMessagesResponse{
 		RequestID:             sqr.RequestID,
 		StreamRequestTypeData: sqr.StreamRequestTypeData,

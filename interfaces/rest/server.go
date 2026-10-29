@@ -15,6 +15,7 @@ import (
 
 	"github.com/kubemq-io/kubemq-community/config"
 	"github.com/kubemq-io/kubemq-community/pkg/guard"
+	"github.com/kubemq-io/kubemq-community/pkg/tracing"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
@@ -84,6 +85,10 @@ func NewServer(svc *services.SystemServices, appConfigs ...*config.Config) (*Ser
 	e.HTTPErrorHandler = s.customHTTPErrorHandler
 	e.Use(middleware.CORSWithConfig(getCORSConfig(appConfig)))
 	e.Use(Logging(s.logger))
+	// Before authentication, so refused requests are traced too.
+	if tracing.Enabled() {
+		e.Use(tracing.EchoMiddleware())
+	}
 	if g != nil {
 		e.Use(Authentication(g))
 	}

@@ -16,6 +16,7 @@ kubemq-ce is a fork of [KubeMQ Community](https://github.com/kubemq-io/kubemq-co
 - **A new dashboard, built from source.** Upstream ships its dashboard only as a compiled bundle. This one lives in [`web/`](web) (Vue 3 + Vite) and covers every channel type. See [Web dashboard](#web-dashboard).
 - **Authentication.** Upstream's community edition has authentication settings but ignores them. Here, gRPC and REST clients can be required to send a JWT, and the dashboard asks for one at sign-in. Tokens can be revoked one by one, rules can limit each token to some channels, and an audit log records who did what. See [Authentication](#authentication).
 - **Channel management from the SDKs.** The SDKs' create, list and delete channel calls work. Upstream only answers them in the commercial edition.
+- **OpenTelemetry tracing.** Traces follow each message from producer through the broker to its consumers. See [Tracing](#tracing).
 - **CloudEvents and MCP.** Anything that can POST a [CloudEvent](#cloudevents) can publish, and AI agents can use the broker through a built-in [MCP server](#mcp-server-for-ai-agents).
 - **Current dependencies.** Go 1.26 and up-to-date gRPC, Prometheus, echo and NATS libraries.
 - **Fixes.** The dashboard no longer shows another server's metrics when two run on the same host, and links to individual channels work on reload.
@@ -147,6 +148,22 @@ audit:
 ```
 
 The audit log has one JSON line per request with the time, transport, remote address, subject, token ID, client ID, operation, action, channel type, channel and outcome (`allowed`, `denied` or `unauthenticated`). On a stream, each channel is logged once per stream rather than per message. On the dashboard, sign-ins, actions and opened subscriptions are logged, but not page refreshes. It works without authentication too, without subjects.
+
+### Tracing
+
+The server can export OpenTelemetry traces over OTLP to any collector (Jaeger, Tempo, Honeycomb, the OpenTelemetry Collector, and so on). It is off by default:
+
+```yaml
+tracing:
+  enable: true
+  endpoint: otel-collector:4317   # empty: OTEL_EXPORTER_OTLP_ENDPOINT, or localhost
+  protocol: grpc                  # or http, usually port 4318
+  insecure: true                  # no TLS to the collector
+  serviceName: kubemq
+  sampleRatio: 1                  # share of new traces to record, 0 to 1
+```
+
+Each gRPC call and REST request gets a server span, continuing the trace a client sends in its `traceparent` metadata or header. Ping, `/ping` and websocket connections get none. Each message the broker accepts gets a `send <channel>` span, and each hand-off to a subscriber or consumer a `receive <channel>` span. The trace context travels in the message's tags as `traceparent` (and `tracestate`), stored with the message for queues and events store. A consumer that reads `traceparent` from the tags can continue the trace, and a producer that sets it there gets its own span as the parent. Standard `OTEL_EXPORTER_OTLP_*` and `OTEL_RESOURCE_ATTRIBUTES` environment variables work for anything not covered above, such as headers.
 
 ## Web dashboard
 

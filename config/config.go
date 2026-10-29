@@ -64,6 +64,7 @@ type Config struct {
 	Authorization   *AuthorizationConfig  `json:"authorization"`
 	Authentication  *AuthenticationConfig `json:"authentication"`
 	Audit           *AuditConfig          `json:"audit"`
+	Tracing         *TracingConfig        `json:"tracing"`
 	Security        *SecurityConfig       `json:"security"`
 	Routing         *RoutingConfig        `json:"routing"`
 	startServerTime int64
@@ -145,6 +146,7 @@ func GetDefaultConfig() *Config {
 		Authorization:   defaultAuthorizationConfig(),
 		Authentication:  defaultAuthenticationConfig(),
 		Audit:           defaultAuditConfig(),
+		Tracing:         defaultTracingConfig(),
 		Security:        defaultSecurityConfig(),
 		Routing:         defaultRoutingConfig(),
 		startServerTime: 0,
@@ -341,6 +343,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.Audit.Validate(); err != nil {
+		return err
+	}
+	if err := c.Tracing.Validate(); err != nil {
 		return err
 	}
 	if c.Authorization.Enable && !c.Authentication.Enable {
