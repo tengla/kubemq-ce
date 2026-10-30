@@ -512,8 +512,16 @@ func (s *Subscription) giveBack(list []*Msg) {
 }
 
 // drainInbox removes the waiting request at the server and still runs onMsg for
-// messages already on their way.
+// messages already on their way. A request that got all its messages is over at
+// the server, so then there's nothing to wait for.
 func (s *Subscription) drainInbox() {
+	s.mu.Lock()
+	waiting := s.outstanding > 0
+	s.mu.Unlock()
+	if !waiting {
+		_ = s.inbox.Unsubscribe()
+		return
+	}
 	if err := s.inbox.Drain(); err == nil {
 		deadline := time.Now().Add(drainTimeout)
 		for s.inbox.IsDraining() && time.Now().Before(deadline) {

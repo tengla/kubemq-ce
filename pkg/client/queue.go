@@ -24,7 +24,8 @@ import (
 )
 
 const (
-	defaultWaitTimout = 1
+	defaultWaitTimout   = 1
+	lastResponseTimeout = time.Second
 )
 
 type delayedQueueMessage struct {
@@ -1031,28 +1032,52 @@ func (qc *QueueClient) StreamQueueMessage(parentCtx context.Context, requests ch
 
 	messageInProcess := atomic.NewBool(false)
 	activeQueueName := "undefined"
+	responsesEnd := make(chan struct{})
+	responsesDone := make(chan struct{})
 	go func() {
+		defer close(responsesDone)
+		forward := func(resp *pb.StreamQueueMessagesResponse) bool {
+			select {
+			case response <- resp:
+
+				msg := resp.Message
+				if msg != nil {
+					qc.logger.Debugw("send queue message to receiver", "queue", msg.Channel, "client_id", msg.ClientID, "message_id", msg.MessageID, "metadata", msg.Metadata, "message_sequence", msg.Attributes.Sequence, "message_timestamp", msg.Attributes.Timestamp)
+				} else {
+					qc.logger.Debugw("send response to stream queue request", "queue", activeQueueName, "request_id", resp.RequestID, "type", resp.StreamRequestTypeData, "is_error", resp.IsError, "error", resp.Error)
+				}
+				return true
+			case <-ctx.Done():
+				qc.logger.Debugw("stream queue message completed", "queue", activeQueueName)
+				return false
+			}
+		}
 		for {
 			select {
 			case resp := <-responseInternalCh:
-				select {
-				case response <- resp:
-
-					msg := resp.Message
-					if msg != nil {
-						qc.logger.Debugw("send queue message to receiver", "queue", msg.Channel, "client_id", msg.ClientID, "message_id", msg.MessageID, "metadata", msg.Metadata, "message_sequence", msg.Attributes.Sequence, "message_timestamp", msg.Attributes.Timestamp)
-					} else {
-						qc.logger.Debugw("send response to stream queue request", "queue", activeQueueName, "request_id", resp.RequestID, "type", resp.StreamRequestTypeData, "is_error", resp.IsError, "error", resp.Error)
-					}
-
-				case <-ctx.Done():
-					qc.logger.Debugw("stream queue message completed", "queue", activeQueueName)
+				if !forward(resp) {
 					return
 				}
+			case <-responsesEnd:
+				select {
+				case resp := <-responseInternalCh:
+					forward(resp)
+				default:
+				}
+				return
 			case <-ctx.Done():
 				qc.logger.Debugw("stream queue message completed", "queue", activeQueueName)
 				return
 			}
+		}
+	}()
+	// Cancelling ctx races with sending, so the answer to the last request goes
+	// out first, unless nobody is there to take it.
+	defer func() {
+		close(responsesEnd)
+		select {
+		case <-responsesDone:
+		case <-time.After(lastResponseTimeout):
 		}
 	}()
 	defer func() {
