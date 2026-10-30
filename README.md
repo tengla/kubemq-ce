@@ -52,6 +52,14 @@ task build          # or: go build -o kubemq -ldflags "-X 'main.version=v2.4.0'"
 
 Run the image as a single replica and mount a persistent volume at `/kubemq/store` so messages survive pod restarts.
 
+Set the `HOST` environment variable to a fixed name, or use a StatefulSet. The store path includes the host name, which defaults to the pod's. A Deployment's pod gets a new name on each restart, so it would start with an empty store and leave the previous directory on the volume for good.
+
+```yaml
+env:
+  - name: HOST
+    value: kubemq
+```
+
 ### Ports
 
 | Port | Serves | Override |
