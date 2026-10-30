@@ -96,3 +96,7 @@ This is a maintenance job first. Replication, clustering and deduplication come 
 
 - [ ] **Tag filters on subscriptions,** for example only events with `region=eu`. Messages already carry tags.
 - [ ] **Ordering keys for queues:** messages with the same key go to one consumer at a time. Easier on JetStream.
+
+### Thomas name suggestion
+- Jolle 
+
