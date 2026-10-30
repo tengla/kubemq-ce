@@ -3,96 +3,43 @@ package broker
 import (
 	"context"
 	"fmt"
-	"github.com/kubemq-io/broker/client/nats"
-	"github.com/kubemq-io/broker/server/stan/stores"
-	"github.com/kubemq-io/kubemq-community/pkg/entities"
-	"github.com/kubemq-io/kubemq-community/pkg/logging"
-	"hash/crc32"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/kubemq-io/kubemq-community/config"
-
-	natsd "github.com/kubemq-io/broker/server/gnatsd/server"
-	snats "github.com/kubemq-io/broker/server/stan/server"
+	"github.com/kubemq-io/kubemq-community/pkg/entities"
+	"github.com/kubemq-io/kubemq-community/pkg/jstore"
+	"github.com/kubemq-io/kubemq-community/pkg/pipe"
+	natsd "github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
-var defaultFileStoreOptions = stores.FileStoreOptions{
-	BufferSize:            2 * 1024 * 1024, // 2MB
-	CompactEnabled:        false,
-	CompactInterval:       5 * 60, // 5 minutes
-	CompactFragmentation:  50,
-	CompactMinFileSize:    1024 * 1024,
-	DoCRC:                 false,
-	CRCPolynomial:         int64(crc32.IEEE),
-	DoSync:                false,
-	SliceMaxMsgs:          0,
-	SliceMaxBytes:         64 * 1024 * 1024, // 64MB
-	SliceMaxAge:           0,
-	SliceArchiveScript:    "",
-	FileDescriptorsLimit:  0,
-	ParallelRecovery:      2,
-	TruncateUnexpectedEOF: false,
-	ReadBufferSize:        2 * 1024 * 1024, // 2MB
-	AutoSync:              1 * time.Minute,
-}
+const minMaxPending = 200 * 1024 * 1024
 
-func getFileStoreOptions(brokerOpts *config.BrokerConfig) stores.FileStoreOptions {
+func (s *Service) getBrokerOptions(appConfig *config.Config) *natsd.Options {
+	opts := &natsd.Options{
+		// Clients are all in this process, so nothing listens on a port.
+		DontListen:    true,
+		NoSigs:        true,
+		WriteDeadline: time.Duration(appConfig.Broker.WriteDeadline) * time.Millisecond,
+		MaxConn:       appConfig.Broker.MaxConn,
+		MaxPayload:    int32(appConfig.Broker.MaxPayload),
+		MaxPending:    minMaxPending,
 
-	opts := defaultFileStoreOptions
-	opts.BufferSize = brokerOpts.WriteBufferSize * 1024 * 1024
-	opts.ReadBufferSize = brokerOpts.ReadBufferSize * 1024 * 1024
-	opts.AutoSync = time.Duration(brokerOpts.DiskSyncSeconds) * time.Second
-	opts.SliceMaxMsgs = brokerOpts.SliceMaxMessages
-	opts.SliceMaxBytes = brokerOpts.SliceMaxBytes * 1024 * 1024
-	opts.SliceMaxAge = time.Duration(brokerOpts.SliceMaxAgeSeconds) * time.Second
-	opts.ParallelRecovery = brokerOpts.ParallelRecovery
+		JetStream:          true,
+		StoreDir:           filepath.Join(appConfig.Store.StorePath, appConfig.Host),
+		JetStreamMaxStore:  appConfig.Store.MaxStorage,
+		JetStreamMaxMemory: appConfig.Store.MaxMemory,
+		SyncInterval:       time.Duration(appConfig.Broker.DiskSyncSeconds) * time.Second,
+	}
+	if int64(opts.MaxPayload) > opts.MaxPending {
+		opts.MaxPending = int64(opts.MaxPayload)
+	}
 	return opts
 }
 
-func (s *Service) getBrokerOptions(appConfig *config.Config) (natsOpts *natsd.Options, snatsOpts *snats.Options) {
-
-	natsOpts = &natsd.Options{}
-	natsOpts.Host = "0.0.0.0"
-	natsOpts.Port = appConfig.Broker.Port
-	natsOpts.WriteDeadline = time.Duration(appConfig.Broker.WriteDeadline) * time.Millisecond
-	natsOpts.MaxConn = appConfig.Broker.MaxConn
-	natsOpts.MaxPayload = int32(appConfig.Broker.MaxPayload)
-	natsOpts.MaxPending = 200 * 1024 * 1024
-	natsOpts.NoSigs = true
-
-	snatsOpts = snats.GetDefaultOptions()
-	snatsOpts.CustomLogger = logging.GetLogFactory().NewLogger("broker-store-server")
-	snatsOpts.EnableLogging = true
-
-	snatsOpts.ID = "kubemq"
-	switch appConfig.Log.Level {
-	case config.LogLevelTypeTrace:
-		snatsOpts.Debug = true
-		snatsOpts.Trace = true
-	case config.LogLevelTypeDebug:
-		snatsOpts.Debug = true
-	}
-	snatsOpts.NATSServerURL = fmt.Sprintf("nats://0.0.0.0:%d", appConfig.Broker.Port)
-	snatsOpts.NATSClientOpts = append(snatsOpts.NATSClientOpts, nats.SetCustomDialer(appConfig.Broker.MemoryPipe))
-
-	snatsOpts.MaxAge = time.Duration(appConfig.Store.MaxRetention) * time.Minute
-	snatsOpts.MaxBytes = appConfig.Store.MaxQueueSize
-	snatsOpts.MaxChannels = appConfig.Store.MaxQueues
-	snatsOpts.MaxMsgs = appConfig.Store.MaxMessages
-	snatsOpts.MaxInactivity = time.Duration(appConfig.Store.MaxPurgeInactive) * time.Minute
-	snatsOpts.MaxSubscriptions = appConfig.Store.MaxSubscribers
-	snatsOpts.StoreType = stores.TypeFile
-	snatsOpts.FilestoreDir = filepath.Join(appConfig.Store.StorePath, appConfig.Host)
-	snatsOpts.FileStoreOpts = getFileStoreOptions(appConfig.Broker)
-	snatsOpts.ClientHBInterval = 24 * time.Hour
-	snatsOpts.ClientHBTimeout = 180 * time.Second
-	snatsOpts.ClientHBFailCount = 120
-
-	return
-
-}
 func (s *Service) startAsBroker(ctx context.Context, appConfig *config.Config) error {
 	defer func() {
 		if r := recover(); r != nil {
@@ -103,37 +50,68 @@ func (s *Service) startAsBroker(ctx context.Context, appConfig *config.Config) e
 		_ = os.RemoveAll(appConfig.Store.StorePath)
 	}
 
-	s.NatsOptions, s.SnatsOptions = s.getBrokerOptions(appConfig)
+	s.NatsOptions = s.getBrokerOptions(appConfig)
+	s.warnAboutOldStore(s.NatsOptions.StoreDir)
 	ns, err := natsd.NewServer(s.NatsOptions)
 	if err != nil {
 		return err
 	}
-	if appConfig.Log.Level == "debug" {
-		ns.SetLogger(s.logger, true, false)
-	} else {
-		ns.SetLogger(s.logger, false, false)
-	}
+	ns.SetLogger(s.logger, appConfig.Log.Level == "debug", false)
 
-	go func() {
-		ns.StartWithPipe(s.appConfig.Broker.MemoryPipe)
-
-	}()
+	go ns.Start()
 	if !ns.ReadyForConnections(readyTimeout) {
+		ns.Shutdown()
 		return entities.ErrServerIsNotReady
 	}
-	ss, err := snats.RunServerWithOpts(s.SnatsOptions, &natsd.Options{
-		Port:     appConfig.Broker.Port,
-		NoSigs:   true,
-		HTTPPort: appConfig.Broker.MonitoringPort,
-	})
+	s.Nats = ns
+	if appConfig.Store.MaxQueues > 0 {
+		// One more for the channel that holds delayed queue messages.
+		err := ns.GlobalAccount().UpdateJetStreamLimits(map[string]natsd.JetStreamAccountLimits{
+			"": {MaxMemory: -1, MaxStore: -1, MaxConsumers: -1, MaxStreams: appConfig.Store.MaxQueues + 1},
+		})
+		if err != nil {
+			ns.Shutdown()
+			return err
+		}
+	}
 
+	appConfig.Broker.MemoryPipe.Bind(ns, pipe.Limits{
+		MaxAgeMinutes:           appConfig.Store.MaxRetention,
+		MaxBytes:                appConfig.Store.MaxQueueSize,
+		MaxMsgs:                 int64(appConfig.Store.MaxMessages),
+		ConsumerInactiveMinutes: appConfig.Store.MaxRetention,
+	})
+	s.adminConn, err = nats.Connect("", nats.InProcessServer(ns), nats.Name("broker-admin"))
 	if err != nil {
+		ns.Shutdown()
 		return err
 	}
-	s.Nats = ns
-	s.Snats = ss
+	s.admin, err = jetstream.New(s.adminConn)
+	if err != nil {
+		s.adminConn.Close()
+		ns.Shutdown()
+		return err
+	}
+	resetCtx, cancel := context.WithTimeout(ctx, readyTimeout)
+	defer cancel()
+	if err := jstore.ResetQueueConsumers(resetCtx, s.admin); err != nil {
+		s.adminConn.Close()
+		ns.Shutdown()
+		return err
+	}
+	if inactive := time.Duration(appConfig.Store.MaxPurgeInactive) * time.Minute; inactive > 0 {
+		go s.purgeInactiveChannels(ctx, inactive)
+	}
 
 	s.isHealthy.Store(true)
 	s.isReady.Store(true)
 	return nil
+}
+
+// warnAboutOldStore tells whoever upgraded that NATS Streaming's files aren't
+// read anymore. They are left in place.
+func (s *Service) warnAboutOldStore(dir string) {
+	if _, err := os.Stat(filepath.Join(dir, "server.dat")); err == nil {
+		s.logger.Warnw(fmt.Sprintf("found NATS Streaming data in %s; this version stores messages in JetStream and doesn't read it, so messages from before the upgrade are not available", dir))
+	}
 }

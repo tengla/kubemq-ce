@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/fortytw2/leaktest"
-	"github.com/kubemq-io/broker/pkg/pipe"
 	"github.com/kubemq-io/kubemq-community/config"
 	"github.com/kubemq-io/kubemq-community/pkg/logging"
+	"github.com/kubemq-io/kubemq-community/pkg/pipe"
 	"github.com/kubemq-io/kubemq-community/services/broker"
 	pb "github.com/kubemq-io/protobuf/go"
 	"github.com/nats-io/nuid"
@@ -40,9 +40,7 @@ func waitForAtLeastCount(fn func() int, atLeast, timeout int) error {
 
 func getConfig(t *testing.T) *config.Config {
 	c := config.GetCopyAppConfig("../../test/")
-	c.Broker.Port = int(testPort.Inc())
 	c.Broker.MemoryPipe = pipe.NewPipe("testing-pipe " + nuid.Next())
-	c.Broker.MonitoringPort = int(testPort.Inc())
 	return c
 }
 func getClientOptions(t *testing.T, c *config.Config) *Options {
@@ -139,7 +137,6 @@ func TestClient_Single_Events(t *testing.T) {
 	defer tearDownSingle(s1, a)
 	defer cancel()
 	o := getClientOptions(t, a)
-	require.EqualValues(t, broker.Standalone, s1.Snats.State())
 	channel := "TestClient_Single_PublishSubscribe"
 	ready := make(chan bool)
 	pubMsg := &pb.Event{ClientID: "test-client-id", Channel: channel, Body: []byte("some-body")}
@@ -191,7 +188,6 @@ func TestClient_Single_EventsWithNoChannelError(t *testing.T) {
 	defer tearDownSingle(s1, a)
 	defer cancel()
 	o := getClientOptions(t, a)
-	require.EqualValues(t, broker.Standalone, s1.Snats.State())
 	c, err := NewClient(o)
 	require.NoError(t, err)
 	defer func() {
@@ -211,7 +207,6 @@ func TestClient_Single_EventsWithInvalidChannelChars(t *testing.T) {
 	defer tearDownSingle(s1, a)
 	defer cancel()
 	o := getClientOptions(t, a)
-	require.EqualValues(t, broker.Standalone, s1.Snats.State())
 	c, err := NewClient(o)
 	require.NoError(t, err)
 	defer func() {
@@ -330,7 +325,6 @@ func TestStoreClient_Single_StartFromLast(t *testing.T) {
 	defer cancel()
 	o := getClientOptions(t, a)
 	o2 := getClientOptions(t, a)
-	require.EqualValues(t, broker.Standalone, s1.Snats.State())
 	c, err := NewStoreClient(o)
 	require.NoError(t, err)
 	defer func() {
@@ -680,4 +674,14 @@ func TestStoreClient_Single_MaxQueues(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, md.Sent)
 
+	msg3 := &pb.Event{
+		ClientID: "test-client-id",
+		Channel:  "TestStoreClient_Single_MaxMessagesPerQueue.3",
+		Body:     []byte("some-body"),
+		Store:    true,
+	}
+	md, err = c.SendEventsStore(ctx, msg3)
+	require.NoError(t, err)
+	require.False(t, md.Sent)
+	require.NotEmpty(t, md.Error)
 }

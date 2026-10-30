@@ -17,7 +17,7 @@ The [roadmap](#roadmap) at the end is the plan for making kubemq-ce a production
 
 ## The big one
 
-- [ ] **Replace the `kubemq-io/broker` fork with `nats-server` and `nats.go`, storage on JetStream**. The fork bundles NATS 2.1.9 (about 2020) and NATS Streaming, which is deprecated with no maintained version, so security fixes no longer come from upstream. This is a maintenance job first; replication and clustering come with it but stay optional. Weeks of work, mostly rewriting queues in `pkg/client`. See roadmap step 4.
+- [x] **Replace the `kubemq-io/broker` fork with `nats-server` and `nats.go`, storage on JetStream**. The fork bundled NATS 2.1.9 (about 2020) and NATS Streaming, which is deprecated with no maintained version, so security fixes no longer came from upstream. This is a maintenance job first; replication and clustering stay optional. See roadmap step 4.
 
 ## Not planned
 
@@ -39,7 +39,7 @@ Who it's for, in order:
 1. **Teams already on KubeMQ.** Their producers and consumers are written against the KubeMQ SDKs. Moving to RabbitMQ or Kafka means rewriting them; moving to kubemq-ce means changing an address. This is the strongest case, so compatibility with the upstream SDKs is the product.
 2. **New projects that want a simple broker.** Five clear patterns, request/reply built in, a dashboard, and one binary to run. Be honest in the README that NATS, RabbitMQ and Redpanda are free and mature alternatives too; kubemq-ce competes on simplicity there, not on price.
 
-The enterprise features such teams would pay for are mostly done: access control, audit logging, revocable API keys, OpenTelemetry, CloudEvents and MCP. The big remaining gap is clustering and high availability, which comes with replacing the broker fork (step 4).
+The enterprise features such teams would pay for are mostly done: access control, audit logging, revocable API keys, OpenTelemetry, CloudEvents and MCP. The big remaining gap is clustering and high availability, which the move to JetStream makes possible (step 4).
 
 - [ ] **Put this at the top of the README.** Lead with compatibility and the open licence, and keep the comparison with upstream factual.
 - [ ] **Settle the name before publishing images or announcing anything.** "KubeMQ" is likely a trademark of KubeMQ Ltd, and the Apache-2.0 licence covers the code, not the name. A distinct name with "compatible with KubeMQ" in the description is the safer path for a project others adopt. Check whether "kubemq-ce" is acceptable, or pick a new name and keep the module path change in mind.
@@ -63,18 +63,19 @@ The enterprise features such teams would pay for are mostly done: access control
 
 ### 4. Replace the broker fork with maintained NATS
 
-Everything below `services/broker` and `pkg/client` comes from the `kubemq-io/broker` fork: the NATS server (`server/gnatsd`, version 2.1.9 from about 2020), the NATS Streaming server (`server/stan`) and both clients. NATS Streaming is deprecated with no maintained version, and the fork doesn't look actively maintained, so security fixes in that code would have to be made here. Replace it with the NATS project's own libraries: `github.com/nats-io/nats-server/v2`, embedded so kubemq stays one binary with an in-process connection instead of the memory pipe, and `github.com/nats-io/nats.go`, including its `jetstream` package.
+The `kubemq-io/broker` fork held the NATS server (`server/gnatsd`, version 2.1.9 from about 2020), the NATS Streaming server (`server/stan`) and both clients. NATS Streaming is deprecated with no maintained version, and the fork doesn't look actively maintained, so security fixes in that code would have had to be made here. It's replaced with the NATS project's own libraries: `github.com/nats-io/nats-server/v2`, embedded so kubemq stays one binary with an in-process connection, and `github.com/nats-io/nats.go`, including its `jetstream` package.
 
-This is a maintenance job first. Replication, clustering and deduplication come with it, but one node stays the default and nothing has to be clustered. NATS Streaming can't be kept on a modern NATS server for long, so the stored patterns have to move to JetStream in the same project.
+This is a maintenance job first. One node stays the default and nothing has to be clustered.
 
-- [ ] **Spike first.** Embed current `nats-server` with JetStream next to the existing broker and port events store, the simplest stored pattern, to see what the queue rewrite involves.
-- [ ] **Move events, commands and queries to `nats.go`.** They use plain publish/subscribe and request/reply, so this is mostly mechanical.
-- [ ] **Rewrite queues and events store on JetStream.** Queues are the bulk of the work: visibility timeouts, peek, ack-all, delays and dead-letter queues in `pkg/client` need rewriting on JetStream consumers.
-- [ ] **Keep one node the default.** Streams start with one replica and file storage under `store/`, so `kubemq server` on a laptop or in a single pod works as it does today. Set JetStream's memory and disk limits from config.
-- [ ] **Migrate existing data.** An export of queues and events store from the old store and an import into JetStream, run once on upgrade, or document that an upgrade starts empty.
-- [ ] **Remove the fork** from `go.mod` once nothing imports it.
+- [x] **Spike first.** Embed current `nats-server` with JetStream and try out what the queue rewrite depends on.
+- [x] **Move events, commands and queries to `nats.go`.** They use plain publish/subscribe and request/reply.
+- [x] **Rewrite queues and events store on JetStream.** `pkg/jstore`, with queue semantics staying in `pkg/client`.
+- [x] **Keep one node the default.** Streams have one replica and file storage under `store/`, so `kubemq server` on a laptop or in a single pod works as it did. `store.maxStorage` and `store.maxMemory` set JetStream's limits.
+- [x] **Migrate existing data.** Not migrated: an upgrade starts empty, as the README says, and the server warns when it finds the old files. A migrator would have to keep the fork as a dependency.
+- [x] **Remove the fork** from `go.mod`.
+- [ ] **Larger stored messages.** JetStream's file store refuses a message over about 32 MiB, while NATS Streaming stored up to `broker.maxPayload` (100 MB by default). Queues and events store now return a clear error above that. Splitting large messages into chunks would lift the limit; do it if someone needs it.
 - [ ] **Optional: clustering.** Three-node clusters with streams raised to three replicas (Raft needs a quorum; two nodes give no fault tolerance), stable node names and a `cluster` config section. A StatefulSet example for Kubernetes. Only needed when the broker must survive a node failure.
-- [ ] **Use what JetStream brings.** Deduplication by message ID within a window, so a retried send can't create a duplicate. Work-queue retention for queues. The key-value store for state such as the query cache.
+- [ ] **Use what JetStream brings.** Deduplication by message ID within a window, so a retried send can't create a duplicate. The key-value store for state such as the query cache. Message scheduling (`Nats-Schedule`) in place of the delay processor. Queues already use work-queue retention.
 
 ### 5. Benchmarks
 
@@ -100,3 +101,23 @@ This is a maintenance job first. Replication, clustering and deduplication come 
 ### Thomas name suggestion
 - Jolle 
 
+
+### Claude name suggestions
+
+Candidates, from one web search each at most. None has been checked on GitHub, Docker Hub, domains or trademark registers yet.
+
+- **Sampan:** a small, light, flat-bottomed boat that carries people and goods around harbours. The search found no software by that name.
+- **Tenma:** from *tenmasen* (伝馬船), a small boat ferrying between ship and shore. *Tenma* also names Japan's old post-horse relay system for messages. Not searched yet, and it's a common Japanese name, so search results will be crowded.
+- **Kobune:** Japanese for "small boat" (小舟). Not searched yet.
+- **Aviso:** a small, fast naval ship that carried dispatches. No software turned up in the search, but ECMWF's Aviso notification service, recalled from memory, needs checking.
+- **Packetboat:** packet boats carried mail on regular routes, and "packet" is also a networking term. Not searched yet.
+- **Lighter:** the barge that carries cargo between ship and shore, with a hint of "lightweight". Not searched yet, and a common word, so hard to search for.
+- **Wherry:** a light river boat for passengers and goods. No software turned up, but it's obscure and sounds like "worry".
+
+Ruled out:
+
+- **Skiff:** Notion bought Skiff, the private email and docs service, in 2024.
+- **Ketch:** Shipa's open-source Kubernetes deployment engine.
+- **Ferry:** taken twice in Kubernetes, by the ferryproxy project and a KubeCarrier component.
+- **Kedge:** two Kubernetes projects, a deployment tool and an edge proxy, both apparently dormant.
+- **Junk, Junker:** "junk mail" for a messaging product, and Junkers is the German maker of WWII aircraft.

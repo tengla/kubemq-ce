@@ -2,9 +2,9 @@ package monitor
 
 import (
 	"fmt"
-	"github.com/kubemq-io/broker/pkg/pipe"
 	"github.com/kubemq-io/kubemq-community/pkg/entities"
 	"github.com/kubemq-io/kubemq-community/pkg/logging"
+	"github.com/kubemq-io/kubemq-community/pkg/pipe"
 	"github.com/nats-io/nuid"
 
 	pb "github.com/kubemq-io/protobuf/go"
@@ -44,7 +44,6 @@ func setup(ctx context.Context, t *testing.T) (*client.Client, *config.Config, *
 	require.NoError(t, err)
 	appConfig := config.GetAppConfig("../../test/")
 
-	appConfig.Broker.MonitoringPort = int(testPort.Inc())
 	appConfig.Api.Port = int(testPort.Inc())
 	appConfig.Store.StorePath = tmp
 	appConfig.Broker.MemoryPipe = pipe.NewPipe(nuid.Next())
@@ -80,7 +79,6 @@ func setupWithStoreClient(ctx context.Context, t *testing.T) (*client.Client, *c
 	require.NoError(t, err)
 	appConfig := config.GetAppConfig("../../test/")
 	appConfig.Broker.MemoryPipe = pipe.NewPipe(nuid.Next())
-	appConfig.Broker.MonitoringPort = int(testPort.Inc())
 	appConfig.Api.Port = int(testPort.Inc())
 	appConfig.Store.StorePath = tmp
 	brokerServer := broker.New(appConfig)
@@ -118,7 +116,6 @@ func setupWithQueueClient(ctx context.Context, t *testing.T) (*client.QueueClien
 	// The monitor reads the pipe from this shared config, so each test
 	// needs a fresh one: the previous test's pipe is closed.
 	appConfig.Broker.MemoryPipe = pipe.NewPipe(nuid.Next())
-	appConfig.Broker.MonitoringPort = int(testPort.Inc())
 	appConfig.Api.Port = int(testPort.Inc())
 	appConfig.Store.StorePath = tmp
 	brokerServer := broker.New(appConfig)

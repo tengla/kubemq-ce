@@ -13,8 +13,8 @@ import (
 	pb "github.com/kubemq-io/protobuf/go"
 )
 
-// storePrefixes maps the channel types that keep messages in NATS Streaming to
-// the prefix of their streaming channel.
+// storePrefixes maps the channel types that keep messages in JetStream to the
+// prefix of their stream subject.
 var storePrefixes = map[string]string{
 	"queues":       "_QUEUES_.",
 	"events_store": "_EVENTS_STORE_.",
@@ -113,7 +113,7 @@ func (s *service) deleteChannel(ctx context.Context, channelType, channel string
 	}
 	_, found := ss.Entities["channels"].GetEntity(channelType, channel)
 	if prefix, ok := storePrefixes[channelType]; ok {
-		if s.broker.Snats != nil && s.broker.Snats.HasChannel(prefix+channel) {
+		if s.broker.HasStoreChannel(prefix + channel) {
 			found = true
 		}
 		if err := s.broker.DeleteStoreChannel(ctx, prefix+channel); err != nil {

@@ -3,7 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
-	"github.com/kubemq-io/broker/client/stan"
+	"github.com/kubemq-io/kubemq-community/pkg/jstore"
 	"github.com/kubemq-io/kubemq-community/pkg/uuid"
 	"github.com/kubemq-io/kubemq-community/services/metrics"
 	pb "github.com/kubemq-io/protobuf/go"
@@ -61,13 +61,12 @@ type QueueDownstreamResponse struct {
 	sync.Mutex
 	*pb.QueuesDownstreamResponse
 	request            *QueueDownstreamRequest
-	subscription       stan.Subscription
+	subscription       *jstore.Subscription
 	unAckedList        []int64
-	unAckedRawMessages map[int64]*stan.Msg
-	subscriptionWait   chan struct{}
+	unAckedRawMessages map[int64]*jstore.Msg
 	itemsReady         chan struct{}
 	sessionDone        *atomic.Bool
-	sendCopyFunc       func(msg *pb.QueueMessage, rawMsg *stan.Msg) error
+	sendCopyFunc       func(msg *pb.QueueMessage, rawMsg *jstore.Msg) error
 	reRouteFunc        func(ctx context.Context, msg *pb.QueueMessage) *pb.SendQueueMessageResult
 	closeResponseCh    chan bool
 	closeComplete      chan bool
@@ -89,8 +88,7 @@ func NewPollResponse(request *QueueDownstreamRequest) *QueueDownstreamResponse {
 		request:            request,
 		subscription:       nil,
 		unAckedList:        nil,
-		unAckedRawMessages: make(map[int64]*stan.Msg),
-		subscriptionWait:   make(chan struct{}, 1),
+		unAckedRawMessages: make(map[int64]*jstore.Msg),
 		itemsReady:         make(chan struct{}, 1),
 		sessionDone:        atomic.NewBool(false),
 		sendCopyFunc:       nil,
@@ -102,7 +100,7 @@ func NewPollResponse(request *QueueDownstreamRequest) *QueueDownstreamResponse {
 
 	return p
 }
-func (p *QueueDownstreamResponse) setSendCopyFunc(sendCopyFunc func(msg *pb.QueueMessage, rawMsg *stan.Msg) error) *QueueDownstreamResponse {
+func (p *QueueDownstreamResponse) setSendCopyFunc(sendCopyFunc func(msg *pb.QueueMessage, rawMsg *jstore.Msg) error) *QueueDownstreamResponse {
 	p.sendCopyFunc = sendCopyFunc
 	return p
 }
@@ -115,7 +113,7 @@ func (p *QueueDownstreamResponse) TransactionId() string {
 	return p.request.TransactionId
 }
 
-func (p *QueueDownstreamResponse) setSubscription(subscription stan.Subscription) {
+func (p *QueueDownstreamResponse) setSubscription(subscription *jstore.Subscription) {
 	p.subscription = subscription
 }
 
@@ -124,12 +122,14 @@ func (p *QueueDownstreamResponse) items() int {
 	defer p.Unlock()
 	return len(p.unAckedRawMessages)
 }
-func (p *QueueDownstreamResponse) addMessage(msg *stan.Msg) {
-	if p.sessionDone.Load() {
-		return
-	}
+
+// addMessage reports whether the response took the message.
+func (p *QueueDownstreamResponse) addMessage(msg *jstore.Msg) bool {
 	p.Lock()
 	defer p.Unlock()
+	if p.sessionDone.Load() || !p.acceptMessages.Load() {
+		return false
+	}
 
 	p.unAckedRawMessages[int64(msg.Sequence)] = msg
 	p.unAckedList = append(p.unAckedList, int64(msg.Sequence))
@@ -140,6 +140,14 @@ func (p *QueueDownstreamResponse) addMessage(msg *stan.Msg) {
 			p.itemsReady <- struct{}{}
 		}
 	}
+	return true
+}
+
+// stopAccepting fixes which messages the response has.
+func (p *QueueDownstreamResponse) stopAccepting() {
+	p.Lock()
+	defer p.Unlock()
+	p.acceptMessages.Store(false)
 }
 func (p *QueueDownstreamResponse) NackAll() error {
 	if p.sessionDone.Load() {
@@ -337,7 +345,7 @@ func (p *QueueDownstreamResponse) ActiveOffsets() ([]int64, error) {
 func (p *QueueDownstreamResponse) processRawMessages(policyFunc func(msg *pb.QueueMessage) bool) {
 	p.Lock()
 	defer p.Unlock()
-	var removeBadMessages []*stan.Msg
+	var removeBadMessages []*jstore.Msg
 	for _, seq := range p.unAckedList {
 		rawMsg, ok := p.unAckedRawMessages[seq]
 		if ok {
@@ -374,7 +382,6 @@ func (p *QueueDownstreamResponse) close() {
 		return
 	}
 	p.sessionDone.Store(true)
-	p.subscriptionWait <- struct{}{}
 	_ = p.subscription.Close()
 
 }

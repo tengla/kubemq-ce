@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kubemq-io/broker/pkg/pipe"
 	"github.com/kubemq-io/kubemq-community/config"
 	"github.com/kubemq-io/kubemq-community/pkg/authentication"
+	"github.com/kubemq-io/kubemq-community/pkg/pipe"
 	"github.com/kubemq-io/kubemq-community/services"
 	pb "github.com/kubemq-io/protobuf/go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -44,7 +44,6 @@ func TestMCP(t *testing.T) {
 	appConfig := config.GetDefaultConfig()
 	appConfig.Host = "mcp-test"
 	appConfig.Api.Port = freePort(t)
-	appConfig.Broker.MonitoringPort = freePort(t)
 	appConfig.Broker.MemoryPipe = pipe.NewPipe(nuid.Next())
 	appConfig.Store.StorePath = t.TempDir()
 	appConfig.Authentication = &config.AuthenticationConfig{

@@ -3,80 +3,44 @@ package broker
 import (
 	"strings"
 	"time"
+
+	"github.com/kubemq-io/kubemq-community/pkg/jstore"
+	natsd "github.com/nats-io/nats-server/v2/server"
 )
 
-type channels struct {
-	ClusterID string    `json:"cluster_id"`
-	ServerID  string    `json:"server_id"`
-	Now       time.Time `json:"now"`
-	Offset    int64     `json:"offset"`
-	Limit     int64     `json:"limit"`
-	Count     int64     `json:"count"`
-	Total     int64     `json:"total"`
-	Channels  []struct {
-		Name          string `json:"name"`
-		Msgs          int64  `json:"msgs"`
-		Bytes         int64  `json:"bytes"`
-		FirstSeq      int64  `json:"first_seq"`
-		LastSeq       int64  `json:"last_seq"`
-		Subscriptions []struct {
-			ClientID     string `json:"client_id"`
-			Inbox        string `json:"inbox"`
-			AckInbox     string `json:"ack_inbox"`
-			QueueName    string `json:"queue_name"`
-			IsDurable    bool   `json:"is_durable"`
-			IsOffline    bool   `json:"is_offline"`
-			MaxInflight  int64  `json:"max_inflight"`
-			AckWait      int64  `json:"ack_wait"`
-			LastSent     int64  `json:"last_sent"`
-			PendingCount int64  `json:"pending_count"`
-			IsStalled    bool   `json:"is_stalled"`
-		} `json:"subscriptions"`
-	} `json:"channels"`
-}
-
-func (ch *channels) toQueues(chType string) *Queues {
-	queues := &Queues{
-		Now:         time.Now(),
-		TotalQueues: 0,
-		Waiting:     0,
-		Delivered:   0,
-		Queues:      nil,
-	}
-	if len(ch.Channels) == 0 {
-		return queues
-	}
-
-	for _, item := range ch.Channels {
-		if strings.Contains(item.Name, chType) {
-			q := &Queue{
-				Name:          strings.Trim(item.Name, chType),
-				Messages:      item.Msgs,
-				Bytes:         item.Bytes,
-				FirstSequence: item.FirstSeq,
-				LastSequence:  item.LastSeq,
-				clients:       nil,
-			}
-			if q.FirstSequence <= q.LastSequence {
-				for _, sub := range item.Subscriptions {
-					if sub.QueueName != "" {
-						c := &Client{
-							ClientId:         sub.ClientID,
-							Active:           !sub.IsOffline,
-							LastSequenceSent: sub.LastSent,
-							IsStalled:        sub.IsStalled,
-							Pending:          sub.PendingCount,
-						}
-						q.clients = append(q.clients, c)
-					}
-				}
-				q.Calc()
-				queues.Sent += q.Sent
-				queues.Delivered += q.Delivered
-				queues.Waiting += q.Waiting
-				queues.Queues = append(queues.Queues, q)
-			}
+func toQueues(details []natsd.StreamDetail, prefix string) *Queues {
+	queues := &Queues{Now: time.Now()}
+	for _, detail := range details {
+		if detail.Config == nil || len(detail.Config.Subjects) == 0 || !strings.HasPrefix(detail.Config.Subjects[0], prefix) {
+			continue
 		}
+		q := &Queue{
+			Name:          strings.TrimPrefix(detail.Config.Subjects[0], prefix),
+			Messages:      int64(detail.State.Msgs),
+			Bytes:         int64(detail.State.Bytes),
+			FirstSequence: int64(detail.State.FirstSeq),
+			LastSequence:  int64(detail.State.LastSeq),
+		}
+		for _, consumer := range detail.Consumer {
+			if consumer == nil {
+				continue
+			}
+			q.clients = append(q.clients, &Client{
+				ClientId:         consumer.Name,
+				Active:           jstore.ConsumerActive(consumer.NumWaiting, consumer.NumAckPending),
+				LastSequenceSent: int64(consumer.Delivered.Stream),
+				Pending:          int64(consumer.NumAckPending),
+			})
+		}
+		if strings.HasPrefix(prefix, jstore.QueueSubjectPrefix) {
+			q.calcWorkQueue()
+		} else {
+			q.Calc()
+		}
+		queues.Sent += q.Sent
+		queues.Delivered += q.Delivered
+		queues.Waiting += q.Waiting
+		queues.Queues = append(queues.Queues, q)
 	}
 	queues.TotalQueues = len(queues.Queues)
 	return queues
@@ -95,8 +59,23 @@ type Queue struct {
 	clients       []*Client
 }
 
+// calcWorkQueue works out the counts of a queue, whose stream keeps only the
+// messages nobody has acked.
+func (q *Queue) calcWorkQueue() {
+	q.Subscribers = len(q.clients)
+	q.Sent = q.LastSequence
+	q.Waiting = q.Messages
+	for _, c := range q.clients {
+		q.Waiting -= c.Pending
+	}
+	if q.Waiting < 0 {
+		q.Waiting = 0
+	}
+	q.Delivered = q.Sent - q.Waiting
+}
+
 func (q *Queue) Calc() {
-	if q.FirstSequence > q.LastSequence {
+	if q.LastSequence == 0 || q.FirstSequence > q.LastSequence {
 		return
 	}
 	q.Sent = q.LastSequence - q.FirstSequence + 1

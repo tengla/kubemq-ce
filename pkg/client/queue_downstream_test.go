@@ -525,6 +525,46 @@ func TestQueueClient_PollClient_ManualAck_NoMaxItems(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 0, len(response.Messages))
 }
+func TestQueueClient_PollClient_OpenResponse_LeavesLaterMessages(t *testing.T) {
+	defer leaktest.Check(t)()
+	ctx, cancel := context.WithCancel(context.Background())
+	cfg := getConfig(t)
+	s1 := setupSingle(ctx, t, cfg)
+	defer tearDownSingle(s1, cfg)
+	defer cancel()
+	time.Sleep(1 * time.Second)
+	sender, err := newTestQueueClient(getClientOptions(t, cfg), cfg.Queue)
+	require.NoError(t, err)
+	request := &QueueDownstreamRequest{
+		TransactionId: "",
+		QueuesDownstreamRequest: &pb.QueuesDownstreamRequest{
+			Channel:     nuid.New().Next(),
+			ClientID:    uuid.New(),
+			MaxItems:    10,
+			WaitTimeout: 1000,
+			AutoAck:     false,
+		},
+	}
+	err = sender.sendMessagesWithPolicy(ctx, 1, request.Channel, 100, 0, 0, 1, "")
+	require.NoError(t, err)
+	first, err := sender.c.Poll(ctx, request)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, len(first.Messages))
+
+	// The first response is still open and wants 9 more, but its poll is over.
+	err = sender.sendMessagesWithPolicy(ctx, 1, request.Channel, 100, 0, 0, 1, "")
+	require.NoError(t, err)
+	second, err := sender.c.Poll(ctx, request)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, len(second.Messages))
+	require.EqualValues(t, 1, len(first.Messages))
+
+	require.NoError(t, first.AckAll())
+	require.NoError(t, second.AckAll())
+	third, err := sender.c.Poll(ctx, request)
+	require.NoError(t, err)
+	require.EqualValues(t, 0, len(third.Messages))
+}
 func TestQueueClient_PollClient_ManualAck_AckAll_Error(t *testing.T) {
 	defer leaktest.Check(t)()
 	ctx, cancel := context.WithCancel(context.Background())

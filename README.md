@@ -18,6 +18,7 @@ kubemq-ce is a fork of [KubeMQ Community](https://github.com/kubemq-io/kubemq-co
 - **Channel management from the SDKs.** The SDKs' create, list and delete channel calls work. Upstream only answers them in the commercial edition.
 - **OpenTelemetry tracing.** Traces follow each message from producer through the broker to its consumers. See [Tracing](#tracing).
 - **CloudEvents and MCP.** Anything that can POST a [CloudEvent](#cloudevents) can publish, and AI agents can use the broker through a built-in [MCP server](#mcp-server-for-ai-agents).
+- **Maintained storage.** Upstream runs on its own fork of NATS Streaming, which is deprecated. Here, messages are kept in JetStream on the current `nats-server`. See [Storage](#storage).
 - **Current dependencies.** Go 1.26 and up-to-date gRPC, Prometheus, echo and NATS libraries.
 - **Fixes.** The dashboard no longer shows another server's metrics when two run on the same host, and links to individual channels work on reload.
 
@@ -64,6 +65,23 @@ Run the image as a single replica and mount a persistent volume at `/kubemq/stor
 The server reads `config.yaml` from the directory of the binary, or from the working directory. You can also point the `CONFIG` environment variable at a file, or pass the whole file base64-encoded. On startup it writes the effective configuration back to that file. Data is stored in `./store` by default.
 
 Any setting can be overridden with an environment variable named after its path: `Section.Field` becomes `SECTION_FIELD`, for example `API_PORT`, `QUEUE_MAX_RECEIVE_COUNT` or `STORE_STORE_PATH`.
+
+### Storage
+
+Queues and events store keep their messages in an embedded JetStream, in `<store.storePath>/<host>/jetstream`, with one stream per channel. Nothing listens on a NATS port; the broker's clients connect in-process.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `store.maxRetention` | `1440` | Minutes a message is kept, `0` for no limit. Also how long a subscriber without a group keeps its position while away. |
+| `store.maxMessages`, `store.maxQueueSize` | `0` | Messages and bytes per channel, `0` for no limit. The oldest go first. |
+| `store.maxQueues` | `0` | Stored channels, `0` for no limit. Sending to one more fails. |
+| `store.maxPurgeInactive` | `1440` | Minutes after which a channel with no new messages and no subscribers is deleted, messages included. `0` keeps it. |
+| `store.maxStorage`, `store.maxMemory` | `0` | Bytes JetStream may use on disk and in memory, `0` to let it choose from the machine's resources. |
+| `broker.diskSyncSeconds` | `60` | Seconds between syncs to disk. A power loss can lose what was written since the last one. |
+
+A stored message can be at most about 32 MiB, a limit of JetStream's file store; a larger one is refused with `message too large`. Events, commands and queries aren't stored, so `broker.maxPayload` (100 MiB) applies to them.
+
+Upgrading from a version that used NATS Streaming starts with empty queues and events store channels. The old files aren't read or removed, and the server logs a warning when it finds them. Drain queues first if their messages matter.
 
 ### Authentication
 
@@ -226,11 +244,23 @@ task build_all                                       # rebuild the dashboard, th
 npm --prefix web ci && npm --prefix web run dev      # dashboard dev server with hot reload
 go test ./...                                        # tests (the integration tests take several minutes)
 task smoke -- localhost:50000                        # kubemq-js SDK smoke test against a running server
+task bench -- -addr localhost:50000 -out new.json    # benchmarks against a running server
 ```
 
 The dashboard dev server proxies API calls to a broker on `http://localhost:8080`. Set `BROKER_URL` to use another one. Run `task web` and commit `assets/` after changing the dashboard, since `go build` embeds whatever is there.
 
 `task smoke` runs [`test/smoke-js`](test/smoke-js/smoke.mjs), which exercises every messaging pattern through the official Node SDK (kubemq-js, pinned in its `package.json`). Set `KUBEMQ_TOKEN` when authentication is on. It writes to fresh `smoke.<id>.*` channels on the target server, and needs a token that may send, receive and manage them.
+
+`task bench` runs [`test/bench`](test/bench/main.go), which measures every messaging pattern over gRPC against a server you started, so it works with any build. Each scenario runs three times and prints medians, and anything sent but never received is reported as lost. It writes to fresh `bench.<id>.*` channels and deletes them after each run. It stores up to 1 GiB per scenario (`-budget`), so give it a server you don't mind loading.
+
+```bash
+kubemq server                                                     # with the build to measure, on a fresh store
+go run ./test/bench -label new -pid $(pgrep -x kubemq) -out new.json
+go run ./test/bench compare old.json new.json                     # marks changes within the spread of the runs as noise
+go run ./test/bench -list                                         # the scenarios; -run takes a regular expression
+```
+
+With `-pid` it also reports the server's memory and CPU time. The tool runs on the same machine as the server unless you point `-addr` elsewhere, and then shares its CPU, so compare runs made the same way.
 
 Report bugs in this repository's [issues](https://github.com/tengla/kubemq-ce/issues).
 

@@ -2,8 +2,8 @@ package grpc
 
 import (
 	"crypto/rand"
-	"github.com/kubemq-io/broker/pkg/pipe"
 	"github.com/kubemq-io/kubemq-community/pkg/entities"
+	"github.com/kubemq-io/kubemq-community/pkg/pipe"
 	"github.com/kubemq-io/kubemq-community/pkg/uuid"
 	"github.com/kubemq-io/kubemq-community/services/metrics"
 	"github.com/kubemq-io/kubemq-go/queues_stream"
@@ -59,7 +59,6 @@ func getAppConfig() *config.Config {
 		panic(err)
 	}
 	appConfig.Grpc.Port = int(testPort.Inc())
-	appConfig.Broker.MonitoringPort = int(testPort.Inc())
 	appConfig.Broker.MemoryPipe = pipe.NewPipe(nuid.Next())
 	appConfig.Store.StorePath = tmp
 	return appConfig

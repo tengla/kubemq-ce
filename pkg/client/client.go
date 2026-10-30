@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	nats "github.com/kubemq-io/broker/client/nats"
-	stan "github.com/kubemq-io/broker/client/stan"
+	"github.com/kubemq-io/kubemq-community/pkg/jstore"
 	"github.com/kubemq-io/kubemq-community/pkg/logging"
+	nats "github.com/nats-io/nats.go"
 
 	"context"
 
@@ -28,10 +28,7 @@ const (
 	delayQueueChannel = "_QUEUE_DELAY_"
 )
 const (
-	storeConnectionTime = 30 * time.Second
-	defaultDeadline     = 2000 * time.Millisecond
-	storePingInterval   = 30000
-	storePingMaxOut     = 30000
+	defaultDeadline = 2000 * time.Millisecond
 )
 
 type Client struct {
@@ -42,12 +39,10 @@ type Client struct {
 	isUp            *atomic.Bool
 	baseConn        *nats.Conn
 	subscriber      *nats.Subscription
-	storeConn       stan.Conn
-	queueConn       stan.Conn
-	storeSubscriber stan.Subscription
+	storeConn       *jstore.Conn
+	storeSubscriber *jstore.Subscription
 	writeDeadline   time.Duration
 	isStoreClient   bool
-	isQueueClient   bool
 }
 
 func getBaseClient(opts *Options, isPersistence bool) (*Client, error) {
@@ -92,31 +87,18 @@ func NewStoreClient(opts *Options) (*Client, error) {
 		return nil, err
 	}
 
-	nc.storeConn, err = nc.connectStore(nc.baseConn, opts)
+	nc.storeConn, err = jstore.Connect(nc.baseConn, opts.MemoryPipe, opts.ClientID)
 	if err != nil {
+		nc.baseConn.Close()
 		return nil, err
 	}
 	nc.isUp.Store(true)
 	return nc, nil
 }
 
-func (c *Client) connectStore(conn *nats.Conn, opts *Options) (stan.Conn, error) {
-	storeConn, err := stan.Connect("kubemq", opts.ClientID,
-		stan.NatsConn(conn),
-		stan.NatsURL(fmt.Sprintf("nats://0.0.0.0:%d", 4224)),
-		stan.ConnectWait(storeConnectionTime),
-		stan.Pings(storePingInterval, storePingMaxOut),
-		stan.SetConnectionLostHandler(func(conn stan.Conn, err error) {
-			c.logger.Errorf("store client %s connection lost", opts.ClientID)
-		}),
-	)
-	return storeConn, err
-}
-
 func (c *Client) connect(opts *Options) error {
 
 	natsOpts := nats.Options{
-		Url: fmt.Sprintf("nats://0.0.0.0:%d", 4224),
 		DisconnectedErrCB: func(conn *nats.Conn, err error) {
 			conn.Close()
 		},
@@ -128,7 +110,7 @@ func (c *Client) connect(opts *Options) error {
 		natsOpts.ReconnectBufSize = 1000
 	}
 	if opts.MemoryPipe != nil {
-		natsOpts.CustomDialer = opts.MemoryPipe
+		natsOpts.InProcessServer = opts.MemoryPipe
 	} else {
 		return fmt.Errorf("no memory pipe exist")
 	}
@@ -144,8 +126,11 @@ func (c *Client) connect(opts *Options) error {
 func (c *Client) UnSubscribe() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.isStoreClient {
+	if c.isStoreClient && c.storeSubscriber != nil {
 		_ = c.storeSubscriber.Unsubscribe()
+	}
+	if c.subscriber == nil {
+		return nil
 	}
 	return c.subscriber.Unsubscribe()
 }
@@ -158,10 +143,7 @@ func (c *Client) Disconnect() error {
 	c.isUp.Store(false)
 
 	if c.isStoreClient {
-		c.storeConn.Close()
-	}
-	if c.isQueueClient {
-		c.queueConn.Close()
+		_ = c.storeConn.Close()
 	}
 
 	c.baseConn.Close()
@@ -223,8 +205,7 @@ func (c *Client) SendEventsStore(ctx context.Context, event *pb.Event) (*pb.Resu
 		return nil, err
 	}
 
-	_, err = c.storeConn.PublishAsync(channel, data, func(s string, err error) {
-	})
+	err = c.storeConn.Publish(channel, data)
 	if err != nil {
 		result.Sent = false
 		result.Error = err.Error()
@@ -282,7 +263,7 @@ func (c *Client) SubscribeToEventsStore(ctx context.Context, subReq *pb.Subscrib
 	channel := prefixEventsStore + subReq.Channel
 
 	var err error
-	c.storeSubscriber, err = c.storeConn.QueueSubscribe(channel, subReq.Group, func(msg *stan.Msg) {
+	c.storeSubscriber, err = c.storeConn.Subscribe(channel, func(msg *jstore.Msg) {
 
 		c.mu.Lock()
 		defer c.mu.Unlock()

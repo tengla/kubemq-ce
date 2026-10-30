@@ -1,7 +1,7 @@
 package client
 
 import (
-	"github.com/kubemq-io/broker/pkg/pipe"
+	"github.com/kubemq-io/kubemq-community/pkg/pipe"
 	"time"
 )
 

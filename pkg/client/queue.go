@@ -17,19 +17,18 @@ import (
 	"github.com/kubemq-io/kubemq-community/config"
 	"go.uber.org/atomic"
 
-	nats "github.com/kubemq-io/broker/client/nats"
-	stan "github.com/kubemq-io/broker/client/stan"
+	"github.com/kubemq-io/kubemq-community/pkg/jstore"
 	"github.com/kubemq-io/kubemq-community/pkg/logging"
 	"github.com/kubemq-io/kubemq-community/pkg/tracing"
+	nats "github.com/nats-io/nats.go"
 )
 
 const (
-	defaultWaitTimout        = 1
-	defaultMaxAceMessageTime = 12 * time.Hour
+	defaultWaitTimout = 1
 )
 
 type delayedQueueMessage struct {
-	raw       *stan.Msg
+	raw       *jstore.Msg
 	msg       *pb.QueueMessage
 	delayedTo int64
 	id        string
@@ -58,7 +57,7 @@ type QueueClient struct {
 
 	isUp                      *atomic.Bool
 	baseConn                  *nats.Conn
-	queueConn                 stan.Conn
+	queueConn                 *jstore.Conn
 	writeDeadline             time.Duration
 	policyCfg                 *config.QueueConfig
 	delayedMessages           sync.Map
@@ -101,10 +100,9 @@ func (qc *QueueClient) SetQueuesDownstreamMiddlewareFunc(fn func(qc *QueueClient
 	qc.queuePollMiddlewareFunc = fn
 }
 
-func (qc *QueueClient) connect(opts *Options) (stan.Conn, error) {
+func (qc *QueueClient) connect(opts *Options) (*jstore.Conn, error) {
 
 	natsOpts := nats.Options{
-		Url: fmt.Sprintf("nats://0.0.0.0:%d", 4224),
 		DisconnectedErrCB: func(conn *nats.Conn, err error) {
 			conn.Close()
 		},
@@ -116,7 +114,7 @@ func (qc *QueueClient) connect(opts *Options) (stan.Conn, error) {
 		//natsOpts.ReconnectBufSize = 1000
 	}
 	if opts.MemoryPipe != nil {
-		natsOpts.CustomDialer = opts.MemoryPipe
+		natsOpts.InProcessServer = opts.MemoryPipe
 	} else {
 		return nil, fmt.Errorf("no memory pipe exist")
 	}
@@ -125,19 +123,12 @@ func (qc *QueueClient) connect(opts *Options) (stan.Conn, error) {
 		return nil, err
 	}
 	qc.baseConn = conn
-	storeConn, err := stan.Connect("kubemq", opts.ClientID,
-		stan.NatsConn(conn),
-		stan.NatsURL(fmt.Sprintf("nats://0.0.0.0:%d", 4224)),
-		stan.ConnectWait(storeConnectionTime),
-		stan.SetConnectionLostHandler(func(conn stan.Conn, err error) {
-			qc.logger.Errorf("queue client %s connection lost", opts.ClientID)
-		}),
-		stan.Pings(storePingInterval, storePingMaxOut),
-		stan.MaxPubAcksInflight(4096),
-		stan.PubAckWait(120*time.Second),
-	)
-
-	return storeConn, err
+	storeConn, err := jstore.Connect(conn, opts.MemoryPipe, opts.ClientID)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return storeConn, nil
 }
 
 func (qc *QueueClient) Disconnect() error {
@@ -327,7 +318,7 @@ func (qc *QueueClient) checkAndEnforceStreamQueueMessageRequest(req *pb.StreamQu
 
 }
 
-func (qc *QueueClient) sendCopyQueueMessage(msg *pb.QueueMessage, rawMsg *stan.Msg) error {
+func (qc *QueueClient) sendCopyQueueMessage(msg *pb.QueueMessage, rawMsg *jstore.Msg) error {
 	newMessage := copyQueueMessage(msg)
 	addReceiveCount(msg)
 	if !qc.processMessagePolicy(msg) {
@@ -393,15 +384,15 @@ func (qc *QueueClient) sendBatchDelayedMessages(ctx context.Context, list []*del
 }
 func (qc *QueueClient) startDelayedQueueProcessor(ctx context.Context) error {
 
-	rawMsgCh := make(chan *stan.Msg, 100)
-	sub, err := qc.queueConn.QueueSubscribe(delayQueueChannel, delayQueueChannel, func(msg *stan.Msg) {
+	rawMsgCh := make(chan *jstore.Msg, 100)
+	sub, err := qc.queueConn.Subscribe(delayQueueChannel, func(msg *jstore.Msg) {
 		select {
 		case rawMsgCh <- msg:
 		case <-ctx.Done():
 			return
 		}
 
-	}, stan.StartAt(4), stan.DurableName(delayQueueChannel), stan.AckWait(24*time.Hour), stan.SetManualAckMode())
+	}, jstore.QueueDurable(), jstore.DeliverAll(), jstore.ManualAck())
 	if err != nil {
 		qc.logger.Errorw("process start delayed queue message failed with error", "error", err.Error())
 		return err
@@ -668,8 +659,11 @@ func (qc *QueueClient) MonitorQueueMessages(ctx context.Context, channel string,
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	subChannel := prefixQueues + channel
-	incomingMsgCh := make(chan *stan.Msg, 1)
-	sub, err := qc.queueConn.QueueSubscribe(subChannel, "", func(msg *stan.Msg) {
+	// A work-queue stream allows one consumer, and watching mustn't take its
+	// messages, so this listens to the subject. Stored messages get their
+	// sequence later, so monitored ones don't have one.
+	incomingMsgCh := make(chan *nats.Msg, 1)
+	sub, err := qc.baseConn.Subscribe(subChannel, func(msg *nats.Msg) {
 
 		select {
 		case incomingMsgCh <- msg:
@@ -677,14 +671,14 @@ func (qc *QueueClient) MonitorQueueMessages(ctx context.Context, channel string,
 		case <-waitCtx.Done():
 		}
 
-	}, stan.StartAt(0))
+	})
 	if err != nil {
 		errCh <- entities.ErrRegisterQueueSubscription
 		return
 	}
 
 	defer func() {
-		err = sub.Close()
+		err = sub.Unsubscribe()
 		if err != nil {
 			qc.logger.Errorw("close queue subscription failed with error", "queue", channel, "error", err.Error())
 		}
@@ -698,7 +692,7 @@ func (qc *QueueClient) MonitorQueueMessages(ctx context.Context, channel string,
 	for {
 		select {
 		case rawMsg := <-incomingMsgCh:
-			msg, err := unmarshalToQueueMessage(rawMsg.Data, rawMsg.Timestamp, rawMsg.Sequence)
+			msg, err := unmarshalToQueueMessage(rawMsg.Data, time.Now().UnixNano(), 0)
 			if err != nil {
 				errCh <- err
 				return
@@ -764,8 +758,8 @@ func (qc *QueueClient) receiveQueueMessages(ctx context.Context, request *pb.Rec
 	waitCtx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
 	allMessagesReceived := atomic.NewBool(false)
-	incomingMsgCh := make(chan *stan.Msg, request.MaxNumberOfMessages)
-	sub, err := qc.queueConn.QueueSubscribe(subChannel, subChannel, func(msg *stan.Msg) {
+	incomingMsgCh := make(chan *jstore.Msg, request.MaxNumberOfMessages)
+	sub, err := qc.queueConn.Subscribe(subChannel, func(msg *jstore.Msg) {
 		if allMessagesReceived.Load() {
 			return
 		}
@@ -777,7 +771,7 @@ func (qc *QueueClient) receiveQueueMessages(ctx context.Context, request *pb.Rec
 		case <-ctx.Done():
 		}
 
-	}, stan.StartAt(4), stan.DurableName(subChannel), stan.MaxInflight(1), stan.AckWait(120*time.Second), stan.SetManualAckMode())
+	}, jstore.QueueDurable(), jstore.DeliverAll(), jstore.MaxInflight(int(request.MaxNumberOfMessages)), jstore.ManualAck())
 	if err != nil {
 		response.IsError = true
 		response.Error = entities.ErrRegisterQueueSubscription.Error()
@@ -789,6 +783,15 @@ func (qc *QueueClient) receiveQueueMessages(ctx context.Context, request *pb.Rec
 			qc.logger.Errorw("close queue subscription failed with error", "queue", request.Channel, "error", err.Error())
 		}
 	}()
+	// The messages stay held until the response is ready, so a canceled request
+	// doesn't lose them.
+	var received []*jstore.Msg
+	ackReceived := func() {
+		sub.StopFetching()
+		for _, rawMsg := range received {
+			_ = rawMsg.Ack()
+		}
+	}
 	for {
 
 		select {
@@ -814,16 +817,16 @@ func (qc *QueueClient) receiveQueueMessages(ctx context.Context, request *pb.Rec
 
 			response.MessagesReceived++
 			response.Messages = append(response.Messages, msg)
+			received = append(received, rawMsg)
 
 			if response.MessagesReceived == request.MaxNumberOfMessages {
 				allMessagesReceived.Store(true)
-				_ = rawMsg.Ack()
+				ackReceived()
 				return response, nil
-			} else {
-				_ = rawMsg.Ack()
 			}
 
 		case <-waitCtx.Done():
+			ackReceived()
 			return response, nil
 		case <-ctx.Done():
 			response.MessagesReceived = 0
@@ -869,10 +872,10 @@ func (qc *QueueClient) receiveQueueMessagesForPeek(ctx context.Context, request 
 	waitCtx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
 
-	incomingMsgCh := make(chan *stan.Msg)
+	incomingMsgCh := make(chan *jstore.Msg)
 	allMessagesReceived := atomic.NewBool(false)
 
-	sub, err := qc.queueConn.QueueSubscribe(subChannel, subChannel, func(msg *stan.Msg) {
+	sub, err := qc.queueConn.Subscribe(subChannel, func(msg *jstore.Msg) {
 		if allMessagesReceived.Load() {
 			return
 		}
@@ -884,7 +887,7 @@ func (qc *QueueClient) receiveQueueMessagesForPeek(ctx context.Context, request 
 		case <-ctx.Done():
 		}
 
-	}, stan.StartAt(4), stan.DurableName(subChannel), stan.MaxInflight(int(request.MaxNumberOfMessages)), stan.AckWait(waitTimeout+time.Second), stan.SetManualAckMode())
+	}, jstore.QueueDurable(), jstore.DeliverAll(), jstore.MaxInflight(int(request.MaxNumberOfMessages)), jstore.ManualAck())
 	if err != nil {
 		response.IsError = true
 		response.Error = entities.ErrRegisterQueueSubscription.Error()
@@ -896,7 +899,7 @@ func (qc *QueueClient) receiveQueueMessagesForPeek(ctx context.Context, request 
 			qc.logger.Errorw("close queue subscription failed with error", "queue", request.Channel, "error", err.Error())
 		}
 	}()
-	var unAckMessages []*stan.Msg
+	var unAckMessages []*jstore.Msg
 	for {
 		select {
 		case rawMsg := <-incomingMsgCh:
@@ -991,9 +994,9 @@ func (qc *QueueClient) AckAllQueueMessages(ctx context.Context, req *pb.AckAllQu
 	ackContext, cancel := context.WithTimeout(ctx, time.Duration(req.WaitTimeSeconds)*time.Second)
 	defer cancel()
 	subChannel := prefixQueues + req.Channel
-	sub, err := qc.queueConn.QueueSubscribe(subChannel, subChannel, func(msg *stan.Msg) {
+	sub, err := qc.queueConn.Subscribe(subChannel, func(msg *jstore.Msg) {
 		response.AffectedMessages++
-	}, stan.StartAt(4), stan.DurableName(subChannel))
+	}, jstore.QueueDurable(), jstore.DeliverAll())
 
 	if err != nil {
 		response.IsError = true
@@ -1013,8 +1016,8 @@ func (qc *QueueClient) AckAllQueueMessages(ctx context.Context, req *pb.AckAllQu
 func (qc *QueueClient) StreamQueueMessage(parentCtx context.Context, requests chan *pb.StreamQueueMessagesRequest, response chan *pb.StreamQueueMessagesResponse, done chan bool) {
 	qc.mu.Lock()
 	defer qc.mu.Unlock()
-	var sub stan.Subscription
-	var rawMsg *stan.Msg
+	var sub *jstore.Subscription
+	var rawMsg *jstore.Msg
 	var currentQueueMsg *pb.QueueMessage
 	var currentRequest *pb.StreamQueueMessagesRequest
 	var err error
@@ -1022,7 +1025,7 @@ func (qc *QueueClient) StreamQueueMessage(parentCtx context.Context, requests ch
 	defer cancel()
 	visibilityTimer := time.NewTimer(time.Hour * 24)
 	waitTimeoutTimer := time.NewTimer(time.Hour * 24)
-	msgCh := make(chan *stan.Msg)
+	msgCh := make(chan *jstore.Msg)
 	responseInternalCh := make(chan *pb.StreamQueueMessagesResponse, 1)
 	isSubActive := false
 
@@ -1118,7 +1121,7 @@ func (qc *QueueClient) StreamQueueMessage(parentCtx context.Context, requests ch
 				}
 
 				// subscribe to durable channel
-				sub, err = qc.queueConn.QueueSubscribe(subQueueName, subQueueName, func(msg *stan.Msg) {
+				sub, err = qc.queueConn.Subscribe(subQueueName, func(msg *jstore.Msg) {
 					if !messageInProcess.Load() {
 						select {
 						case msgCh <- msg:
@@ -1129,7 +1132,7 @@ func (qc *QueueClient) StreamQueueMessage(parentCtx context.Context, requests ch
 						return
 					}
 
-				}, stan.StartAt(4), stan.DurableName(subQueueName), stan.MaxInflight(1), stan.AckWait(defaultMaxAceMessageTime), stan.SetManualAckMode())
+				}, jstore.QueueDurable(), jstore.DeliverAll(), jstore.MaxInflight(1), jstore.ManualAck())
 
 				if err != nil {
 					// subscribe failed
@@ -1154,6 +1157,7 @@ func (qc *QueueClient) StreamQueueMessage(parentCtx context.Context, requests ch
 						continue
 					}
 
+					sub.StopFetching()
 					err := rawMsg.Ack()
 					if err != nil {
 						qc.logger.Errorw("ack queue message error", "queue", activeQueueName, "message_seq", currentRequest.RefSequence, "error", err.Error())
@@ -1497,27 +1501,11 @@ func (qc *QueueClient) Poll(ctx context.Context, request *QueueDownstreamRequest
 	waitCtx, waitCancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer waitCancel()
 
-	sub, err := qc.queueConn.QueueSubscribe(subChannel, subChannel, func(msg *stan.Msg) {
-
-		select {
-
-		case <-waitCtx.Done():
-			//select {
-			//case <-response.subscriptionWait:
-			//}
-
-			return
-		default:
-
+	sub, err := qc.queueConn.Subscribe(subChannel, func(msg *jstore.Msg) {
+		if !response.addMessage(msg) {
+			_ = msg.Release()
 		}
-		if response.acceptMessages.Load() && response.items() <= int(request.MaxItems) {
-			response.addMessage(msg)
-		} else {
-			<-response.subscriptionWait
-			return
-		}
-
-	}, stan.StartAt(4), stan.DurableName(subChannel), stan.MaxInflight(int(request.MaxItems)), stan.AckWait(365*24*time.Hour), stan.SetManualAckMode())
+	}, jstore.QueueDurable(), jstore.DeliverAll(), jstore.MaxInflight(int(request.MaxItems)), jstore.ManualAck())
 	if err != nil {
 		return nil, entities.ErrRegisterQueueSubscription
 	}
@@ -1532,6 +1520,10 @@ func (qc *QueueClient) Poll(ctx context.Context, request *QueueDownstreamRequest
 		response.Close()
 		return nil, fmt.Errorf("context canceled during poll process")
 	}
+	// The response can stay open long after this, so it mustn't keep messages
+	// from other consumers beyond the ones it returns.
+	response.stopAccepting()
+	sub.HandBack()
 
 	if response.items() > 0 {
 

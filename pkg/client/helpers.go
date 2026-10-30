@@ -1,9 +1,8 @@
 package client
 
 import (
-	"fmt"
-	"github.com/kubemq-io/broker/client/stan"
 	"github.com/kubemq-io/kubemq-community/pkg/entities"
+	"github.com/kubemq-io/kubemq-community/pkg/jstore"
 	pb "github.com/kubemq-io/protobuf/go"
 	"time"
 )
@@ -30,22 +29,29 @@ func UnmarshalToEventReceive(data []byte) (*pb.EventReceive, error) {
 	return qm, err
 }
 
-func ParseSubscriptionRequest(req *pb.Subscribe) []stan.SubscriptionOption {
-	var list = []stan.SubscriptionOption{stan.DurableName(fmt.Sprintf("%s-%s", req.Channel, req.Group))}
+// ParseSubscriptionRequest returns the options of an events store subscription.
+// A group shares one position. Without a group, the position is the client's,
+// so a client that comes back with the same ID continues where it left off.
+func ParseSubscriptionRequest(req *pb.Subscribe) []jstore.SubOption {
+	durable := "group|" + req.Group
+	if req.Group == "" {
+		durable = "client|" + req.ClientID
+	}
+	var list = []jstore.SubOption{jstore.Durable(durable)}
 	switch req.EventsStoreTypeData {
 
 	case pb.Subscribe_StartFromLast:
-		list = append(list, stan.StartWithLastReceived())
+		list = append(list, jstore.DeliverLast())
 	case pb.Subscribe_StartNewOnly:
-		list = append(list, stan.StartAt(0))
+		list = append(list, jstore.DeliverNew())
 	case pb.Subscribe_StartFromFirst:
-		list = append(list, stan.DeliverAllAvailable())
+		list = append(list, jstore.DeliverAll())
 	case pb.Subscribe_StartAtSequence:
-		list = append(list, stan.StartAtSequence(uint64(req.EventsStoreTypeValue)))
+		list = append(list, jstore.StartAtSequence(uint64(req.EventsStoreTypeValue)))
 	case pb.Subscribe_StartAtTime:
-		list = append(list, stan.StartAtTimeDelta(time.Since(time.Unix(0, req.EventsStoreTypeValue))))
+		list = append(list, jstore.StartAtTime(time.Unix(0, req.EventsStoreTypeValue)))
 	case pb.Subscribe_StartAtTimeDelta:
-		list = append(list, stan.StartAtTimeDelta(time.Duration(req.EventsStoreTypeValue)*time.Second))
+		list = append(list, jstore.StartAtTime(time.Now().Add(-time.Duration(req.EventsStoreTypeValue)*time.Second)))
 
 	}
 	return list

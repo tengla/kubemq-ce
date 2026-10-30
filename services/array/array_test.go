@@ -2,8 +2,8 @@ package array
 
 import (
 	"context"
-	"github.com/kubemq-io/broker/pkg/pipe"
 	"github.com/kubemq-io/kubemq-community/pkg/logging"
+	"github.com/kubemq-io/kubemq-community/pkg/pipe"
 	"github.com/nats-io/nuid"
 
 	"io/ioutil"
@@ -43,7 +43,6 @@ func getAppConfig() *config.Config {
 		panic(err)
 	}
 	appConfig := config.GetCopyAppConfig("../../test/")
-	appConfig.Broker.MonitoringPort = int(testPort.Inc())
 	appConfig.Api.Port = int(testPort.Inc())
 	appConfig.Broker.MemoryPipe = pipe.NewPipe(nuid.Next())
 	appConfig.Store.StorePath = tmp

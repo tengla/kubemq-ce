@@ -38,6 +38,10 @@ tasks:
     cmds:
       - npm ci
       - node smoke.mjs {{.CLI_ARGS}}
+  # Runs test/bench against a running server: task bench -- -addr localhost:50000
+  bench:
+    cmds:
+      - go run ./test/bench {{.CLI_ARGS}}
   goreleaser:
     env:
       TAG: v2.3.7

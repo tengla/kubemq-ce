@@ -14,6 +14,8 @@ type StoreConfig struct {
 	MaxQueueSize     int64  `json:"maxQueueSize"`
 	MaxRetention     int    `json:"maxRetention"`
 	MaxPurgeInactive int    `json:"maxPurgeInactive"`
+	MaxStorage       int64  `json:"maxStorage"`
+	MaxMemory        int64  `json:"maxMemory"`
 }
 
 func defaultStoreConfig() *StoreConfig {
@@ -26,6 +28,8 @@ func defaultStoreConfig() *StoreConfig {
 		"Store.MaxQueueSize",
 		"Store.MaxRetention",
 		"Store.MaxPurgeInactive",
+		"Store.MaxStorage",
+		"Store.MaxMemory",
 	)
 	return &StoreConfig{
 		CleanStore:       false,
@@ -36,6 +40,8 @@ func defaultStoreConfig() *StoreConfig {
 		MaxQueueSize:     0,
 		MaxRetention:     1440,
 		MaxPurgeInactive: 1440,
+		MaxStorage:       0,
+		MaxMemory:        0,
 	}
 }
 
@@ -65,6 +71,12 @@ func (s *StoreConfig) Validate() error {
 
 	if s.MaxPurgeInactive < 0 {
 		return NewConfigurationError("bad store configuration: MaxPurgeInactive cannot be negative")
+	}
+	if s.MaxStorage < 0 {
+		return NewConfigurationError("bad store configuration: MaxStorage cannot be negative")
+	}
+	if s.MaxMemory < 0 {
+		return NewConfigurationError("bad store configuration: MaxMemory cannot be negative")
 	}
 	return nil
 }

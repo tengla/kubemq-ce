@@ -3,9 +3,9 @@ package rest
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/kubemq-io/broker/pkg/pipe"
 	test2 "github.com/kubemq-io/kubemq-community/interfaces/test"
 	"github.com/kubemq-io/kubemq-community/pkg/entities"
+	"github.com/kubemq-io/kubemq-community/pkg/pipe"
 	"github.com/kubemq-io/kubemq-community/services/metrics"
 	pb "github.com/kubemq-io/protobuf/go"
 	"github.com/nats-io/nuid"
@@ -59,7 +59,6 @@ func getAppConfig() *config.Config {
 	}
 	appConfig := config.GetCopyAppConfig("../../test/")
 	appConfig.Rest.Port = int(testPort.Inc())
-	appConfig.Broker.MonitoringPort = int(testPort.Inc())
 	appConfig.Broker.MemoryPipe = pipe.NewPipe(nuid.Next())
 	appConfig.Store.StorePath = tmp
 	return appConfig
