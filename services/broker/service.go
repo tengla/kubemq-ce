@@ -11,6 +11,7 @@ import (
 
 	"github.com/kubemq-io/kubemq-community/pkg/jstore"
 	"github.com/kubemq-io/kubemq-community/pkg/logging"
+	"github.com/kubemq-io/kubemq-community/pkg/storelock"
 
 	"github.com/kubemq-io/kubemq-community/config"
 
@@ -39,6 +40,7 @@ type Service struct {
 	stateNotifiers          *HealthNotifier
 	adminConn               *nats.Conn
 	admin                   jetstream.JetStream
+	storeLock               *storelock.Lock
 }
 
 func New(appConfig *config.Config) *Service {
@@ -75,6 +77,7 @@ func (s *Service) Close() {
 	}
 	s.Nats.Shutdown()
 	s.Nats.WaitForShutdown()
+	s.releaseStore()
 	s.logger.Warnw("broker shutdown process completed")
 	s.Stopped <- struct{}{}
 

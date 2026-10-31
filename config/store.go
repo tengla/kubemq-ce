@@ -1,10 +1,5 @@
 package config
 
-import (
-	"fmt"
-	"strings"
-)
-
 type StoreConfig struct {
 	CleanStore       bool   `json:"cleanStore"`
 	StorePath        string `json:"storePath"`
@@ -48,9 +43,6 @@ func defaultStoreConfig() *StoreConfig {
 func (s *StoreConfig) Validate() error {
 	if s.StorePath == "" {
 		return NewConfigurationError("bad store configuration: store path cannot be empty")
-	}
-	if strings.HasPrefix(s.StorePath, "/") {
-		s.StorePath = fmt.Sprintf(".%s", s.StorePath)
 	}
 	if s.MaxQueues < 0 {
 		return NewConfigurationError("bad store configuration: MaxQueues cannot be negative")

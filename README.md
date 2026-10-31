@@ -54,7 +54,7 @@ Run the image as a single replica and mount a persistent volume at `/kubemq/stor
 
 Set the `HOST` environment variable to a fixed name, or use a StatefulSet. The store path includes the host name, which defaults to the pod's. A Deployment's pod gets a new name on each restart, so it would start with an empty store and leave the previous directory on the volume for good.
 
-A Deployment also needs the `Recreate` strategy. A rolling update can run the new pod next to the old one, and two servers writing to one store lose messages, because nothing locks it.
+A Deployment also needs the `Recreate` strategy. With a fixed `HOST`, the new pod of a rolling update can't start while the old one holds the store's lock (`<store.storePath>/<host>.lock`), so the rollout would never finish. The lock is there because two servers writing to one store lose messages.
 
 ```yaml
 strategy:

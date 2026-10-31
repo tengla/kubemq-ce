@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,12 +12,16 @@ import (
 	"github.com/kubemq-io/kubemq-community/pkg/entities"
 	"github.com/kubemq-io/kubemq-community/pkg/jstore"
 	"github.com/kubemq-io/kubemq-community/pkg/pipe"
+	"github.com/kubemq-io/kubemq-community/pkg/storelock"
 	natsd "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-const minMaxPending = 200 * 1024 * 1024
+const (
+	minMaxPending = 200 * 1024 * 1024
+	lockSuffix    = ".lock"
+)
 
 func (s *Service) getBrokerOptions(appConfig *config.Config) *natsd.Options {
 	opts := &natsd.Options{
@@ -40,14 +45,59 @@ func (s *Service) getBrokerOptions(appConfig *config.Config) *natsd.Options {
 	return opts
 }
 
-func (s *Service) startAsBroker(ctx context.Context, appConfig *config.Config) error {
+// lockStore takes the store's lock, so a second server can't write to the same
+// files. The file sits next to the host's directory, not in it, and a volume that
+// doesn't support locks only gets a warning, since it worked before there was one.
+func (s *Service) lockStore(appConfig *config.Config) error {
+	path := filepath.Join(appConfig.Store.StorePath, appConfig.Host+lockSuffix)
+	lock, err := storelock.Acquire(path)
+	if errors.Is(err, storelock.ErrHeld) {
+		return fmt.Errorf("another server is using the store, %s is locked; two servers writing to one store lose messages", path)
+	}
+	if err != nil {
+		s.logger.Warnw("could not lock the store, so nothing stops a second server from using it", "path", path, "error", err)
+		return nil
+	}
+	s.storeLock = lock
+	return nil
+}
+
+func (s *Service) releaseStore() {
+	if s.storeLock != nil {
+		s.storeLock.Release()
+		s.storeLock = nil
+	}
+}
+
+// cleanStore removes everything in the store except the lock this server holds.
+func cleanStore(appConfig *config.Config) {
+	entries, err := os.ReadDir(appConfig.Store.StorePath)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.Name() != appConfig.Host+lockSuffix {
+			_ = os.RemoveAll(filepath.Join(appConfig.Store.StorePath, entry.Name()))
+		}
+	}
+}
+
+func (s *Service) startAsBroker(ctx context.Context, appConfig *config.Config) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.Fatalf("recovering from panic, %v", r)
 		}
 	}()
+	if err := s.lockStore(appConfig); err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			s.releaseStore()
+		}
+	}()
 	if appConfig.Store.CleanStore {
-		_ = os.RemoveAll(appConfig.Store.StorePath)
+		cleanStore(appConfig)
 	}
 
 	s.NatsOptions = s.getBrokerOptions(appConfig)
