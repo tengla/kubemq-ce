@@ -60,18 +60,20 @@ type Queue struct {
 }
 
 // calcWorkQueue works out the counts of a queue, whose stream keeps only the
-// messages nobody has acked.
+// messages nobody has acked. Waiting includes messages a client holds, because a
+// handed-back message stays pending in the consumer until it's delivered again.
+// Delivered includes them too, as it did on NATS Streaming.
 func (q *Queue) calcWorkQueue() {
 	q.Subscribers = len(q.clients)
 	q.Sent = q.LastSequence
 	q.Waiting = q.Messages
+	q.Delivered = q.Sent - q.Messages
 	for _, c := range q.clients {
-		q.Waiting -= c.Pending
+		q.Delivered += c.Pending
 	}
-	if q.Waiting < 0 {
-		q.Waiting = 0
+	if q.Delivered > q.Sent {
+		q.Delivered = q.Sent
 	}
-	q.Delivered = q.Sent - q.Waiting
 }
 
 func (q *Queue) Calc() {

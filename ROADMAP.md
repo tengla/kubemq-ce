@@ -85,7 +85,9 @@ This is a maintenance job first. One node stays the default and nothing has to b
 ### 6. Operations
 
 - [ ] **Helm chart** for a single node first, then a cluster, with the persistent volume, probes (`/health`, `/ready`), resource limits and the auth, tracing and audit settings.
-- [ ] **Behave well when the disk fills:** refuse new messages with a clear error instead of failing in the storage layer, and expose disk use as a metric.
+- [ ] **Behave well when the disk fills:** refuse new messages with a clear error instead of failing in the storage layer, and expose disk use as a metric. Neither a full disk nor reaching `store.maxStorage` has been tested since the move to JetStream, so first check what a sender sees and whether the server recovers once there's room again.
+- [ ] **Refuse a store another server is using.** Nothing locks the store, so a second server on the same path starts normally. In a test with 200 confirmed sends through each of two servers, 199 of the 400 messages were left after a restart. The old store had no lock either, and refused to start after the same test. A file lock on the store path, which the OS releases if the process dies, would make the second server exit with a clear error.
+- [ ] **Stop rewriting absolute store paths.** `store.storePath: /data` silently becomes `./data`, so a volume mounted at `/data` is never written to. It should either be used as given or refused.
 - [ ] **KEDA** docs and an example `ScaledObject` (see above).
 
 ### 7. Hardening
