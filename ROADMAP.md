@@ -30,6 +30,8 @@ The [roadmap](#roadmap) at the end is the plan for making kubemq-ce a production
 
 What it takes to go from a well-run fork to a broker people can run in production, in order. Each step makes the next one safer.
 
+**Where it stands (2026-10-31):** step 4 was done first and is on `master`; only its optional items are open. Steps 0–3 haven't started. For a project only one person runs, backups (step 3) and a run in a real cluster (step 6) matter most. Before anyone else uses it, settle the name (step 0), then add CI (step 1), releases (step 2) and backups (step 3).
+
 ### 0. Positioning
 
 kubemq-ce is the KubeMQ-compatible broker without the enterprise licence: the same SDKs, API and messaging patterns, fully open source under Apache-2.0, in one binary with no telemetry. KubeMQ's enterprise edition is priced for large companies, which leaves out the teams that would otherwise use it.
@@ -49,6 +51,7 @@ The enterprise features such teams would pay for are mostly done: access control
 
 - [ ] **Isolate the integration tests.** Every test in a package uses the same fixed API port from its `config.yaml`, and the port counters start at the same number each run, so two runs at once collide. Give each test free ports and its own temp store, as `services/api/mcp_test.go` does, and stop writing `config.yaml` during tests.
 - [ ] **Make the suite faster.** It takes about 13 minutes, mostly in `pkg/client` (6 min) and `interfaces/grpc` (4 min). Look for fixed sleeps and per-test broker startups that can be shared.
+- [ ] **Make the tests pass under `-race`.** The stream tests in `pkg/client` fail there, as they did before the move to JetStream, because they log after the test has ended. `TestRestServer_CloudEvents` also failed once with connection refused, cause unknown.
 - [ ] **Run CI on every pull request:** `go vet`, golangci-lint, the Go tests, the dashboard build (check that `assets/` matches `web/`) and `task smoke` against a freshly built server.
 - [ ] **Check more SDKs.** Add smoke tests for kubemq-go, kubemq-Python, kubemq-Java and kubemq-CSharp next to the kubemq-js one, and run them all in CI (see step 0).
 
@@ -80,14 +83,20 @@ This is a maintenance job first. One node stays the default and nothing has to b
 
 ### 5. Benchmarks
 
-- [ ] **Measure before and after the move.** Throughput and latency per pattern, with message sizes from 100 B to 1 MB, on one node and later on a cluster. Keep the harness in the repo so regressions show up, and publish the numbers.
+- [x] **Keep a benchmark tool in the repo.** `test/bench` runs against any running server, and `compare` shows the change between two runs (see the README). A negative `LOST` in its output means extra deliveries, and it takes a token through `-token`, not `KUBEMQ_TOKEN`.
+- [x] **Measure before and after the move, on one node.** On one laptop, compared with the old broker: receives are mostly faster (+16% to +111%), downstream is 5–11% slower, stream-ack 5% slower and pipeline 4% faster. Batches are 53–65% slower, events store sends about 20% slower, single sends under load 9–17% slower and channel creation about 30% slower. Memory in the benchmark run went from 4.5 GB to 1.7 GB.
+- [ ] **Publish the numbers,** measured on hardware more like production. Add a cluster run if step 4's clustering gets done.
 
 ### 6. Operations
 
+- [ ] **Run it in a real cluster.** The JetStream build has only run on a Mac so far, not on Linux, in the container image or on a slow disk. Use `strategy: Recreate` and a fixed `HOST`, as the README says. Restart the pod and check that messages survive and retention frees the disk.
 - [ ] **Helm chart** for a single node first, then a cluster, with the persistent volume, probes (`/health`, `/ready`), resource limits and the auth, tracing and audit settings.
 - [ ] **Behave well when the disk fills:** refuse new messages with a clear error instead of failing in the storage layer, and expose disk use as a metric. Neither a full disk nor reaching `store.maxStorage` has been tested since the move to JetStream, so first check what a sender sees and whether the server recovers once there's room again.
 - [x] **Refuse a store another server is using.** A second server on the same store and host exits with a clear error. The lock belongs to the open file, so a crash doesn't leave it held.
 - [x] **Use absolute store paths as given.** `store.storePath: /data` used to become `./data` without a word, so a volume mounted at `/data` was never written to.
+- [ ] **Run the store lock on Windows.** It compiles there, but has only run on a Mac.
+- [ ] **Share `kubemq.db` between hosts, or don't.** Two servers with different `HOST` values can share a store path, but the second can't open the dashboard's `kubemq.db`. It logs an error and keeps running, and what that does to its dashboard hasn't been checked. `cleanStore` also deletes the other host's store.
+- [ ] **Fix the Watch tab's timestamp on command responses.** It shows a date like `56830761419-06-22`, on the old broker too. Cosmetic.
 - [ ] **KEDA** docs and an example `ScaledObject` (see above).
 
 ### 7. Hardening
